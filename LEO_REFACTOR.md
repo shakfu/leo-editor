@@ -43,7 +43,7 @@ skipped items; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 908 tests, passing against **real PyQt6** and with no Qt at all |
+| 0 — Safety net | **done** — 910 tests, passing against **real PyQt6** and with no Qt at all |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -60,7 +60,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 908 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 910 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -69,7 +69,7 @@ $ PYTHONPATH=. python3 -m leo.scripts.check_leo_sync
 LeoPyRef.leo is in sync with all mirrored files.
 ```
 
-The same suite passes against **real PyQt6** in the project's `.venv` -- 908 tests, only
+The same suite passes against **real PyQt6** in the project's `.venv` -- 910 tests, only
 3 skips instead of 23, so every Qt-only test runs -- and the multi-view behaviour was
 driven through real Qt widgets and confirmed in the GUI by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
 importing Leo no longer imports Qt.
@@ -329,11 +329,16 @@ and `--dump` prints one frame for use in a pipe.
 
 ### What is *not* fixed yet
 
-- **Headline text is still widget-authoritative** (found by the editable terminal view,
-  above). Stage 6 made the model authoritative for *body* text and stopped there;
-  `onHeadChanged` still reads the headline from a widget, and any view that forgets
-  `tree.setHeadline` corrupts the undo stack. Stage 6's unfinished half, and it bites a
-  non-Qt view immediately.
+- **Headline text is still widget-authoritative**, though it no longer corrupts undo.
+  `onHeadChanged` reads the new headline from `headline_wrapper(p)` rather than from
+  `p.h` -- the same inversion stage 6 fixed for body text. What made it dangerous was
+  `LeoTree.endEditLabel` committing that widget even when no edit had been started:
+  `c.endEditing()` runs at the top of `u.undo`, so a model-only rename made Leo record a
+  headline change the user never made, pushing a bead and eating the next undo.
+  `LeoQtTree.endEditLabel` already returned early with no editor open; the base class
+  did not, so only non-Qt views saw it. The base class now tracks `editing_p` and
+  commits only a real edit (two tests, both failing before the fix). The underlying
+  inversion remains: finishing it is the headline half of stage 6.
 - **27 mechanical call sites still read the body through the widget.** Not a correctness
   bug any more (see stage 6 above), but they should be `c.getBodyText()`.
 - **`c.p` is still set inside `LeoTree.set_body_text_after_select`**, which is model

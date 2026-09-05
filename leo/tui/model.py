@@ -35,8 +35,8 @@ WRAPPER_REACHES: list[str] = [
     "u.beforeChangeBody/afterChangeBody read the caret, selection and scroll "
     "from c.frame.body.wrapper; afterChangeBody's docstring makes that the "
     "caller's contract.",
-    "Committing a headline must call c.frame.tree.setHeadline: the headline "
-    "widget, not p.h, is what c.endEditing compares against.",
+    "Committing a headline should call c.frame.tree.setHeadline: the headline "
+    "widget, not p.h, is what onHeadChanged compares against.",
 ]
 
 
@@ -205,11 +205,11 @@ class OutlineModel:
         with self.outline.acting_view(c):
             bunch = u.beforeChangeHeadline(p)
             p.v.setHeadString(text)
-            # Tell this view's headline widget too. Leo's own undo code does
-            # the same (see NullTree.setHeadline, "called from the undo/redo
-            # logic"). Skipping it leaves the widget holding the old text, and
-            # the next c.endEditing believes the user typed a headline edit --
-            # which pushes a spurious undo bead and eats the next undo.
+            # Keep this view's headline widget in step, as Leo's own undo
+            # code does (see NullTree.setHeadline, "called from the undo/redo
+            # logic"). Not doing so used to corrupt the undo stack; that hole
+            # is closed in LeoTree.endEditLabel now, but the widget is still
+            # what onHeadChanged compares against when the user edits here.
             tree = c.frame.tree
             if tree and hasattr(tree, 'setHeadline'):
                 tree.setHeadline(p, text)
