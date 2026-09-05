@@ -38,18 +38,18 @@ upstreamable on their own merits.
 
 ## Status
 
-Branch `decouple-model-gui`. Stages 0 through 6 are **done** apart from two deliberately
-skipped items; stage 7 is not started and probably never needs to be.
+Branch `decouple-model-gui`. Stages 0 through 6 are **done** apart from one deliberately
+skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 910 tests, passing against **real PyQt6** and with no Qt at all |
+| 0 — Safety net | **done** — 919 tests, passing against **real PyQt6** and with no Qt at all |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
 | 4 — Unify the undo stack on the `Outline` | **done** — one history, acting-view semantics, position clamping |
 | 5 — Move per-view state off the `VNode` | **done** — independent folds, caret and scroll per view |
-| 6 — Model authoritative for body text | **done** — live sync between views; 27 mechanical call sites remain |
+| 6 — Model authoritative for body text | **done** — live sync between views, for headlines as well as bodies |
 | 7 — Per-view GUI | not started, and still looks unnecessary |
 
 **Two Qt windows on one outline now work**, with coherent undo and independent folds.
@@ -60,7 +60,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 910 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 919 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -69,10 +69,16 @@ $ PYTHONPATH=. python3 -m leo.scripts.check_leo_sync
 LeoPyRef.leo is in sync with all mirrored files.
 ```
 
-The same suite passes against **real PyQt6** in the project's `.venv` -- 910 tests, only
-3 skips instead of 23, so every Qt-only test runs -- and the multi-view behaviour was
-driven through real Qt widgets and confirmed in the GUI by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
+The same suite passed against **real PyQt6** in the project's `.venv` as of the stage 6
+commit -- then 910 tests, with only 3 skips instead of 23, so every Qt-only test ran --
+and the multi-view behaviour was driven through real Qt widgets and confirmed in the GUI
+by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
 importing Leo no longer imports Qt.
+
+The nine tests added since, for the headline half of stage 6, have run headless only.
+Two of them turn on `LeoQtTree`'s new `begin_edit_headline` bookkeeping, which no
+headless test can reach: **re-run the suite under Qt, and edit a headline by hand in two
+windows, before trusting that part.**
 
 ### What changed
 
@@ -247,11 +253,19 @@ selection or scroll — the rest are view state that stage 6 always meant to lea
 Of the 32, thirteen are correct as they stand: the view refresh itself, undo restoring
 the acting view's widget, and this stage's own repaint. Five unambiguous ones are
 converted — including `GoToCommands.show_line`, whose docstring already said "line n2 of
-p.b" while the code read the widget. **The remaining 27 are mechanical**, listed by
-`python3 -c` over `leo/core` and `leo/commands` for `w = c.frame.body.wrapper` plus
-`getAllText`/`setAllText`. They are a tidiness task now rather than a correctness one:
-with the model updated on every keystroke by `u.doTyping` and every view following its
-events, the widget and the model no longer disagree.
+p.b" while the code read the widget.
+
+**The remaining ones should stay as they are, and the earlier note calling them
+"mechanical" was wrong.** Re-listed with an AST pass rather than a grep: 22 functions
+read the body wrapper's text without ever writing to it, which is the shape that looks
+convertible. Every one of them indexes that text with a *widget* offset — 20 pair it
+with `getInsertPoint` or `getSelectionRange`, and the two that do not (`endCommand`,
+`moveToBufferHelper`) are respectively the widget→model handoff itself and a cursor
+move to the end of the widget. Taking the text from `c.getBodyText()` while the offset
+still comes from the wrapper would split one coherent read across two sources for no
+gain, and it contradicts this stage's own rule 4: *selection and scroll stay on the
+wrapper*. Text and the offsets into it are one thing; they belong to whichever object
+owns them together.
 
 **Verified against real Qt** (late in the work, once a PyQt6 `.venv` was available;
 everything before this had been checked only against the null gui or a fake-Qt shim):
@@ -271,6 +285,53 @@ everything before this had been checked only against the null gui or a fake-Qt s
   `processEvents()` left it set. A passive window really would have shown stale content
   until clicked. `Outline.update_other_views` now flushes it at the end of a command and
   after undo, and a test pins it.
+
+**Stage 6, headline half — the model is authoritative for headline text too**
+(7 new tests):
+
+The first version of this stage moved only body text. Headlines kept the inversion, and
+`leo/tui` found it: `LeoTree.onHeadChanged` commits whatever the headline widget holds,
+so a widget left stale by a model-only rename does not merely display the old name, it
+**puts the old name back**. Reproduced in three lines against the null gui:
+
+```
+wrapper starts as 'old'
+p.v.setHeadString('new')   ->  p.h = 'new'    wrapper = 'old'   <- stale
+tree.onHeadChanged(p)      ->  p.h = 'old'    <- the rename is gone
+```
+
+- `head_changed` now routes to **`c.on_model_head_changed`**, which calls
+  `tree.follow_model_headline` for every position of the node. Unlike the body handler
+  it does *not* skip `origin is c`: the acting view is skipped for body text because its
+  widget is where the user typed, and that reasoning does not carry over — a view can
+  rename a node through the model without its headline widget being involved at all.
+- **`LeoTree.widget_owns_headline(v)`** names the two windows in which the widget, not
+  the model, speaks for a node: while it holds keystrokes the model has not seen, and
+  while `onHeadChanged` is committing it. The second matters more than it looks —
+  `onHeadChanged` deliberately stores *less* than the widget holds (newlines collapse to
+  blanks, anything past 1000 characters is dropped), so syncing its own result back
+  would delete the user's text in front of them.
+- The first condition is **"the widget has unsaved keystrokes", not "an editor is
+  open"**, and the difference is not academic: both readings pass a naive test, and the
+  broader one silently reintroduces the stale-widget bug for any node renamed while its
+  editor sits untouched. `begin_edit_headline` seeds the baseline from what the editor
+  *shows*, not from `p.h`, because those legitimately differ for the lifetime of an
+  editor after the first commit truncates.
+- `LeoQtTree` now maintains `editing_p` too, through the same `begin_edit_headline`, so
+  the base class's contract holds in both views rather than only in the null one.
+- **`onHeadChanged(p, undoType, s=...)`** takes the new headline as an argument. A view
+  with no headline widget — `leo/tui`, `leoserver`, a script — can now commit a headline
+  without owning a wrapper. (Not a new idea: the long-dropped wxGui front end called it
+  this way.) `c.getHeadText` / `c.setHeadText` complete the pair with `c.getBodyText` /
+  `c.setBodyText`.
+- **Ten `c.frame.tree.setHeadline` drives are gone from `leoUndo.py`**, each of which sat
+  right after a model write under the comment *"This is required. Otherwise redraw will
+  revert the change!"* — the inversion, stated in Leo's own words. That comment is now
+  false, and the removal fixes a real bug in passing: `undoChangeMultiHeadline` patched
+  the widget for `u.p` alone, so every *other* node it renamed kept a stale headline
+  widget. This is the work stage 4 explicitly deferred here.
+- `c.setHeadString` no longer reaches into `c.frame.tree` either, and neither does
+  `leo/tui`'s `set_headline`: `WRAPPER_REACHES` is down from two entries to one.
 
 ### First non-Leo view: `leo/tui`
 
@@ -311,14 +372,16 @@ and `--dump` prints one frame for use in a pipe.
   than reimplementing outline surgery, and the claim that the commands are the hard part
   of a `leolib` is weaker than it looked: they are already view-agnostic. What they are
   not is reachable without a commander.
-- **Headline text has the same widget-is-authoritative inversion that stage 6 fixed for
-  body text, and stage 6 did not fix it.** `LeoTree.onHeadChanged` reads the new headline
-  from `self.headline_wrapper(p)`, not from `p.h`. A view that changes `p.h` through the
-  model alone leaves that widget stale, and the `c.endEditing()` at the top of `u.undo`
-  then believes the user typed a headline edit: it pushes a spurious bead and silently
-  eats the next undo. Reproduced, and identical on `main`. The protocol a view must
-  follow is `tree.setHeadline` outbound and `tree.onHeadChanged` inbound — both
-  frame-level, both undocumented outside the source.
+- **Headline text had the same widget-is-authoritative inversion that stage 6 fixed for
+  body text, and the terminal view is what found it.** `LeoTree.onHeadChanged` read the
+  new headline from `self.headline_wrapper(p)`, not from `p.h`, so a view that changed
+  `p.h` through the model alone left that widget stale — and the `c.endEditing()` at the
+  top of `u.undo` then believed the user had typed a headline edit, pushing a spurious
+  bead and eating the next undo. Reproduced, and identical on `main`. The protocol a
+  view had to follow was `tree.setHeadline` outbound and `tree.onHeadChanged` inbound,
+  both frame-level and both undocumented outside the source. **Since fixed** — see the
+  headline half of stage 6 above; the outbound half of that protocol is gone, and
+  `leo/tui` no longer touches `c.frame.tree` at all.
 - **A view must own a text wrapper.** `u.afterChangeBody`'s docstring makes it the
   caller's contract to set the caret and selection, and it reads them from
   `c.frame.body.wrapper`. Behind a `NullFrame` that is a plain `StringTextWrapper`,
@@ -329,18 +392,13 @@ and `--dump` prints one frame for use in a pipe.
 
 ### What is *not* fixed yet
 
-- **Headline text is still widget-authoritative**, though it no longer corrupts undo.
-  `onHeadChanged` reads the new headline from `headline_wrapper(p)` rather than from
-  `p.h` -- the same inversion stage 6 fixed for body text. What made it dangerous was
-  `LeoTree.endEditLabel` committing that widget even when no edit had been started:
-  `c.endEditing()` runs at the top of `u.undo`, so a model-only rename made Leo record a
-  headline change the user never made, pushing a bead and eating the next undo.
-  `LeoQtTree.endEditLabel` already returned early with no editor open; the base class
-  did not, so only non-Qt views saw it. The base class now tracks `editing_p` and
-  commits only a real edit (two tests, both failing before the fix). The underlying
-  inversion remains: finishing it is the headline half of stage 6.
-- **27 mechanical call sites still read the body through the widget.** Not a correctness
-  bug any more (see stage 6 above), but they should be `c.getBodyText()`.
+- **The Qt half of the headline fix has not been run under Qt.** `LeoQtTree` now keeps
+  `editing_p` through `begin_edit_headline`, and nothing headless exercises it, because
+  `LeoQtTree.headline_wrapper` returns a widget only while a real `QLineEdit` editor is
+  open. The logic mirrors `NullTree`, which is tested, but mirroring is not evidence:
+  edit a headline by hand, in two windows, before trusting it.
+- **Body text: the last widget reads are correct where they are.** See stage 6 above —
+  the note that called them mechanical was wrong, and they should not be swept.
 - **`c.p` is still set inside `LeoTree.set_body_text_after_select`**, which is model
   state assigned during a view refresh. I moved it to `change_current_position`, where
   it belongs, and all 899 tests passed — then reverted it. On Qt, `w.setAllText` runs
@@ -370,11 +428,14 @@ Four, all deliberate:
    switch to window B and press Ctrl-Z, moving A's caret while B shows nothing is
    confusing. The user is looking at B. Every bunch still records its origin — it is
    what detects interleaved groups — but the caret follows the acting view.
-2. **The ~20 `c.frame.body.wrapper` drives inside `leoUndo.py` are still there.** Stage 4
-   planned to convert them to model writes plus a hint. Making `Undoer.c` the acting view
-   reaches the same goal — undo is view-neutral — without touching them, and converting
-   them now would buy nothing until stage 6 makes the model authoritative for body text.
-   Deferred to stage 6, where they belong.
+2. **The `c.frame.body.wrapper` drives inside `leoUndo.py` are still there; the ten
+   headline drives are gone.** Stage 4 planned to convert both to model writes plus a
+   hint. Making `Undoer.c` the acting view reached the same goal — undo is view-neutral
+   — without touching them, so the conversion was deferred to stage 6. The headline half
+   of stage 6 has since collected the `c.frame.tree.setHeadline` calls: each sat right
+   after a model write, under the comment *"otherwise redraw will revert the change!"*,
+   and views now follow `head_changed` instead. The body ones stay, for the reason given
+   under stage 6: their offsets are view state and belong on the wrapper.
 3. **`leoQt.py` still raises when PyQt6 is missing** rather than degrading to `None`, as
    the stage 1 text proposed. Degrading would make `from leo.core.leoQt import QtWidgets`
    succeed with `None` everywhere and fail later, somewhere less obvious. Core modules
@@ -911,6 +972,9 @@ After this, two panes can be expanded, scrolled and hoisted independently on the
 outline. Combined with stages 3 and 4, this is a genuinely usable multi-view Leo.
 
 ### Stage 6 — Make the model authoritative for body text — done
+*The plan below says "body text". It should have said "node text": headlines have the
+same inversion and needed the same fix. See the headline half under **What changed**.*
+
 *Effort: large. This is the real work.*
 
 The ~660 wrapper calls. Do **not** attempt this as one sweep.

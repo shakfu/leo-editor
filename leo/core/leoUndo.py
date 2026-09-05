@@ -1489,8 +1489,6 @@ class Undoer:
         u.p.setDirty()
         u.p.b = u.newBody
         u.p.h = u.newHead
-        # This is required so. Otherwise redraw will revert the change!
-        c.frame.tree.setHeadline(u.p, u.newHead)
         if u.newMarked:
             u.p.setMarked()
         else:
@@ -1514,21 +1512,22 @@ class Undoer:
         c.recolor(u.p)
         # Restore the headline.
         u.p.initHeadString(u.newHead)
-        # This is required. Otherwise redraw will revert the change!
-        c.frame.tree.setHeadline(u.p, u.newHead)
 
     # @+node:felix.20230326231408.1: *4* u.redoChangeMultiHeadline
     def redoChangeMultiHeadline(self) -> None:
         c, u = self.c, self
         c.recolor(u.p)
         # Swap the ones from the 'bunch.headline' dict
+        # No c.frame.tree.setHeadline here, and none for the other nodes
+        # either: initHeadString emits head_changed, and every view follows it
+        # in c.on_model_head_changed. This loop used to patch the widget for
+        # u.p alone, so the *other* renamed nodes kept stale headline widgets --
+        # the same inversion, just less visible.
         for gnx, oldNewTuple in u.headlines.items():
             v = c.fileCommands.gnxDict.get(gnx)
             v.initHeadString(oldNewTuple[1])
             if v.gnx == u.p.gnx:
                 u.p.setDirty()
-                # This is required.  Otherwise redraw will revert the change!
-                c.frame.tree.setHeadline(u.p, oldNewTuple[1])
         # selectPosition causes recoloring, so don't do this unless needed.
         if c.p != u.p:  # #1333.
             c.selectPosition(u.p)
@@ -1542,8 +1541,6 @@ class Undoer:
         u.p.setDirty()
         u.p.b = u.newBody
         u.p.h = u.newHead
-        # This is required so. Otherwise redraw will revert the change!
-        c.frame.tree.setHeadline(u.p, u.newHead)
         if u.newMarked:
             u.p.setMarked()
         else:
@@ -1749,8 +1746,6 @@ class Undoer:
         c.recolor(u.p)
         # Restore the headline.
         u.p.initHeadString(u.newHead)
-        # This is required so.  Otherwise redraw will revert the change!
-        c.frame.tree.setHeadline(u.p, u.newHead)  # New in 4.4b2.
         if u.groupCount == 0 and u.newSel:
             i, j = u.newSel
             w.setSelectionRange(i, j)
@@ -1894,8 +1889,6 @@ class Undoer:
         u.p.setDirty()
         u.p.b = u.oldBody
         u.p.h = u.oldHead
-        # This is required.  Otherwise c.redraw will revert the change!
-        c.frame.tree.setHeadline(u.p, u.oldHead)
         if u.oldMarked:
             u.p.setMarked()
         else:
@@ -1918,8 +1911,6 @@ class Undoer:
         u.p.setDirty()
         c.recolor(u.p)
         u.p.initHeadString(u.oldHead)
-        # This is required. Otherwise c.redraw will revert the change!
-        c.frame.tree.setHeadline(u.p, u.oldHead)
 
     # @+node:felix.20230326231543.1: *4* u.undoChangeMultiHeadline
     def undoChangeMultiHeadline(self) -> None:
@@ -1929,13 +1920,16 @@ class Undoer:
         c.recolor(u.p)
 
         # Swap the ones from the 'bunch.headline' dict
+        # No c.frame.tree.setHeadline here, and none for the other nodes
+        # either: initHeadString emits head_changed, and every view follows it
+        # in c.on_model_head_changed. This loop used to patch the widget for
+        # u.p alone, so the *other* renamed nodes kept stale headline widgets --
+        # the same inversion, just less visible.
         for gnx, oldNewTuple in u.headlines.items():
             v = c.fileCommands.gnxDict.get(gnx)
             v.initHeadString(oldNewTuple[0])
             if v.gnx == u.p.gnx:
                 u.p.setDirty()
-                # This is required.  Otherwise redraw will revert the change!
-                c.frame.tree.setHeadline(u.p, oldNewTuple[0])
         if c.p != u.p:
             c.selectPosition(u.p)
 
@@ -2141,8 +2135,6 @@ class Undoer:
         w.setAllText(u.oldBody)
         c.recolor(u.p)
         u.p.h = u.oldHead
-        # This is required.  Otherwise c.redraw will revert the change!
-        c.frame.tree.setHeadline(u.p, u.oldHead)
         if u.groupCount == 0 and u.oldSel:
             i, j = u.oldSel
             w.setSelectionRange(i, j)
@@ -2177,8 +2169,6 @@ class Undoer:
         w.setAllText(u.oldBody)
         c.recolor(u.p)
         p.h = u.oldHead
-        # This is required.  Otherwise c.redraw will revert the change!
-        c.frame.tree.setHeadline(p, u.oldHead)
         i, j = u.oldSel
         w.setSelectionRange(i, j)
         w.setYScrollPosition(u.oldYScroll)

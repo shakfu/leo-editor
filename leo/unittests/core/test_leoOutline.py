@@ -584,6 +584,47 @@ class TestOutline(LeoUnitTest):
             w.setAllText = original
         self.assertEqual(calls, [], 'the acting view repainted its own widget')
 
+    # @+node:sa.20260905240100.1: *3* TestOutline.test_headline_syncs_live_between_views
+    def test_headline_syncs_live_between_views(self):
+        """
+        A rename in one view reaches the other view's headline widget at once.
+
+        The headline half of the previous test. It matters more than it looks:
+        onHeadChanged commits whatever the widget holds, so a second view left
+        with a stale widget does not merely display the old name -- it puts the
+        old name back the next time anything commits that widget.
+        """
+        c = self.c
+        c.rootPosition().h = 'original'
+        c2 = self.second_view()
+        c.selectPosition(c.rootPosition())
+        c2.selectPosition(c2.rootPosition())
+        w2 = c2.frame.tree.headline_wrapper(c2.p)
+        self.assertEqual(w2.getAllText(), 'original')
+
+        with c.outline.acting_view(c):
+            c.p.h = 'renamed in the first view'
+        self.assertEqual(w2.getAllText(), 'renamed in the first view')
+
+        # And the second view's commit agrees rather than reverting.
+        c2.frame.tree.onHeadChanged(c2.p)
+        self.assertEqual(c.rootPosition().h, 'renamed in the first view')
+
+    # @+node:sa.20260905240100.2: *3* TestOutline.test_get_and_set_head_text
+    def test_get_and_set_head_text(self):
+        """c.getHeadText/c.setHeadText answer for the document, not a window."""
+        c = self.c
+        root = c.rootPosition()
+        root.h = 'root'
+        other = root.insertAsLastChild()
+        other.h = 'other'
+        c.selectPosition(c.rootPosition())
+        self.assertEqual(c.getHeadText(), 'root')
+        # A node this window has no headline widget for: it could not answer.
+        self.assertEqual(c.getHeadText(c.rootPosition().lastChild()), 'other')
+        c.setHeadText('changed', p=c.rootPosition().lastChild())
+        self.assertEqual(c.rootPosition().lastChild().h, 'changed')
+
     # @+node:sa.20260905190300.4: *3* TestOutline.test_get_and_set_body_text
     def test_get_and_set_body_text(self):
         """c.getBodyText/c.setBodyText answer for the document, not a window."""

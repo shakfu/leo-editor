@@ -160,7 +160,9 @@ class TestTui(LeoUnitTest):
         """
         self.assertEqual(tui_model.FRAME_REACHES, [])
         # A view *is* entitled to a text buffer; those are tracked separately.
-        self.assertEqual(len(tui_model.WRAPPER_REACHES), 2)
+        # This was 2 until the headline half of stage 6: committing a headline
+        # no longer requires the view to keep a headline widget in step.
+        self.assertEqual(len(tui_model.WRAPPER_REACHES), 1)
 
     # @-others
 

@@ -213,8 +213,11 @@ class Outline:
         # Not 'status_changed': a dirty or marked bit only changes a node's
         # icon, and v.updateIcon already pokes every tree. Redrawing for it
         # would be wasteful, and a redraw resets the body caret.
-        for signal in ('head_changed', 'structure_changed'):
-            signal_manager.connect(self, signal, c.on_model_outline_changed)
+        # A headline widget needs more than a redraw: it is what
+        # LeoTree.onHeadChanged commits, so it must track the model even in the
+        # view that made the change. See c.on_model_head_changed.
+        signal_manager.connect(self, 'head_changed', c.on_model_head_changed)
+        signal_manager.connect(self, 'structure_changed', c.on_model_outline_changed)
         signal_manager.connect(self, 'bulk_changed', c.on_model_bulk_changed)
 
     # @+node:sa.20260905200000.1: *3* outline.update_other_views

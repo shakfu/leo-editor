@@ -35,8 +35,6 @@ WRAPPER_REACHES: list[str] = [
     "u.beforeChangeBody/afterChangeBody read the caret, selection and scroll "
     "from c.frame.body.wrapper; afterChangeBody's docstring makes that the "
     "caller's contract.",
-    "Committing a headline should call c.frame.tree.setHeadline: the headline "
-    "widget, not p.h, is what onHeadChanged compares against.",
 ]
 
 
@@ -204,15 +202,12 @@ class OutlineModel:
         u = c.undoer
         with self.outline.acting_view(c):
             bunch = u.beforeChangeHeadline(p)
+            # No reach into c.frame.tree here. This used to have to call
+            # tree.setHeadline itself, because a headline widget left stale by
+            # a model-only rename is what onHeadChanged then commits -- so the
+            # rename would be reverted. Every view now follows head_changed in
+            # c.on_model_head_changed, which is the headline half of stage 6.
             p.v.setHeadString(text)
-            # Keep this view's headline widget in step, as Leo's own undo
-            # code does (see NullTree.setHeadline, "called from the undo/redo
-            # logic"). Not doing so used to corrupt the undo stack; that hole
-            # is closed in LeoTree.endEditLabel now, but the widget is still
-            # what onHeadChanged compares against when the user edits here.
-            tree = c.frame.tree
-            if tree and hasattr(tree, 'setHeadline'):
-                tree.setHeadline(p, text)
             p.setDirty()
             c.setChanged()
             u.afterChangeHeadline(p, 'Change Headline', bunch)

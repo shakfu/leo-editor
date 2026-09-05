@@ -931,6 +931,10 @@ class LeoQtTree(leoFrame.LeoTree):
                 c.recolor(p)
                 p.setDirty()
                 u.afterChangeHeadline(p, 'Edit Headline', undoData)
+            # The widget no longer speaks for p: Qt fires this on focus-out as
+            # well as from endEditLabel, so it is the one place sure to run.
+            self.editing_p = None
+            self.editing_baseline_text = None
             self.redraw_after_head_changed()
             c.outerUpdate()
 
@@ -1157,6 +1161,11 @@ class LeoQtTree(leoFrame.LeoTree):
         if item := self.position2item(p):
             if self.use_declutter:
                 item.setText(0, item._real_text)
+            # Tell the model side that this widget now speaks for p's headline:
+            # see LeoTree.widget_owns_headline. Without it a rename arriving
+            # from a script, from undo or from another window would overwrite
+            # what the user is typing here.
+            self.begin_edit_headline(p)
             e, _wrapper = self.editLabelHelper(item, selectAll, selection)
         else:
             e = None
@@ -1225,11 +1234,14 @@ class LeoQtTree(leoFrame.LeoTree):
         """
         item = self.getCurrentItem()
         if not item:
+            self.editing_p = self.editing_baseline_text = None
             return
         e = self.getTreeEditorForItem(item)
         if not e:
+            self.editing_p = self.editing_baseline_text = None
             return
-        # Trigger the end-editing event.
+        # Trigger the end-editing event. This runs editingFinished_callback,
+        # which clears self.editing_p.
         w = self.treeWidget
         w.closeEditor(e, EndEditHint.NoHint)
         w.setCurrentItem(item)

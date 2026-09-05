@@ -2301,6 +2301,40 @@ class Commands:
         if p:
             c.setBodyString(p, s)
 
+    # @+node:sa.20260905250001.1: *4* c.getHeadText & c.setHeadText
+    def getHeadText(self, p: Position = None) -> str:
+        """
+        Return a node's headline, from the *model*.
+
+        Prefer this to c.headline_wrapper(p).getAllText(). The wrapper exists
+        only where this view happens to have drawn the node, and while the user
+        is editing it, it holds text the model has not accepted yet -- Leo
+        collapses newlines and truncates at 1000 characters on the way in.
+        """
+        c = self
+        p = p or c.p
+        return p.h if p else ''
+
+    def setHeadText(self, s: str, p: Position = None, undoType: str | None = None) -> None:
+        """
+        Set a node's headline in the model, and let every view follow.
+
+        The headline counterpart of c.setBodyText. Pass undoType to make the
+        change undoable, as a user-initiated rename should be; omit it for a
+        bare model write, which is what c.setHeadString has always done.
+        """
+        c = self
+        p = p or c.p
+        if not p or p.h == s:
+            return
+        if undoType is None:
+            c.setHeadString(p, s)
+        else:
+            # onHeadChanged owns the undo bead, the dirty bit, the recolor and
+            # the headkey1/headkey2 hooks. Driving it from the model rather
+            # than from a widget is the point of its `s` argument.
+            c.frame.tree.onHeadChanged(p, undoType=undoType, s=s)
+
     # @+node:sa.20260905190100.1: *4* c: model event handlers
     # Registered by Outline.subscribe_view. The model never calls a view
     # directly; these are how *this* view learns that someone else changed the
@@ -2325,8 +2359,31 @@ class Commands:
         w.setAllText(s)  # Guards onTextChanged, so this cannot loop.
         w.setSelectionRange(min(i, len(s)), min(j, len(s)), insert=ins)
 
+    def on_model_head_changed(self, v: VNode, origin: Commands = None) -> None:
+        """
+        Follow a headline change made anywhere, in this view's headline widget.
+
+        Unlike on_model_body_changed this does not skip `origin is c`. The
+        acting view is skipped for body text because its widget is where the
+        user typed, so it is already right. That does not hold here: a view can
+        rename a node through the model without its headline widget being
+        involved at all -- and if that widget is then left stale, onHeadChanged
+        will commit it and revert the rename. tree.follow_model_headline knows
+        the two cases where the widget really does speak for the node; `origin`
+        is not one of them.
+        """
+        c = self
+        if not c.exists:
+            return
+        if tree := c.frame.tree:
+            for p in c.vnode2allPositions(v):
+                tree.follow_model_headline(p, v.h)
+        if origin is c:
+            return
+        c.redraw_later()
+
     def on_model_outline_changed(self, v: VNode, origin: Commands = None) -> None:
-        """Redraw when another view changed a headline, the shape or a status bit."""
+        """Redraw when another view changed the shape of the outline."""
         c = self
         if origin is c or not c.exists:
             return
@@ -2472,12 +2529,13 @@ class Commands:
 
         This is used in by unit tests to restore the outline.
         """
-        c = self
         p.initHeadString(s)
         p.setDirty()
-        # Change the actual tree widget so
-        # A later call to c.endEditing or c.redraw will use s.
-        c.frame.tree.setHeadline(p, s)
+        # No c.frame.tree.setHeadline here any more. initHeadString emits
+        # head_changed, and every view -- this one included -- follows it in
+        # c.on_model_head_changed. Calling the tree directly would also
+        # overwrite a headline the user is in the middle of editing, which the
+        # event path is careful not to do.
 
     # @+node:ekr.20060109164136: *5* c.setLog
     def setLog(self) -> None:

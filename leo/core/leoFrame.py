@@ -881,6 +881,13 @@ class LeoTree:
         # The node whose headline is being edited, or None. Only a real edit
         # may be committed by endEditLabel: see the comment there.
         self.editing_p: Position | None = None
+        # The text this view's open headline editor showed when it last agreed
+        # with the model. The editor holds unsaved keystrokes exactly when its
+        # text has since diverged from this. See LeoTree.widget_owns_headline.
+        self.editing_baseline_text: str | None = None
+        # The VNode whose headline onHeadChanged is committing right now, if
+        # any. Also LeoTree.widget_owns_headline.
+        self._committing_v: VNode | None = None
         self.generation = 0  # low-level vnode methods increment this count.
         self.redrawCount = 0  # For traces
         self.use_chapters = False  # May be overridden in subclasses.
@@ -1061,20 +1068,96 @@ class LeoTree:
     def redraw_after_head_changed(self) -> None:
         self.c.redraw()
 
+    # @+node:sa.20260905250000.1: *4* LeoTree.widget_owns_headline
+    def widget_owns_headline(self, v: VNode) -> bool:
+        """
+        True while this view's headline widget, not the model, speaks for v.
+
+        Everywhere else the widget must mirror v.h -- see
+        tree.follow_model_headline, which is what keeps it there. There are
+        exactly two windows in which it must not:
+
+        - The widget holds keystrokes the model has not seen. Overwriting
+          those is the headline version of the cursor thrash that stage 2's
+          `origin` field exists to prevent. Note that this is narrower than
+          "an editor is open": a rename that arrives while the editor sits
+          untouched has nothing to overwrite, and *should* appear in it.
+        - onHeadChanged is committing the widget. It deliberately stores
+          *less* than the widget holds -- newlines collapse to blanks, and
+          anything past 1000 characters is dropped -- so pushing its result
+          back would delete the user's own text in front of them.
+        """
+        tree = self
+        if tree._committing_v is v:
+            return True
+        if tree.editing_p is None or tree.editing_p.v is not v:
+            return False
+        w = tree.headline_wrapper(tree.editing_p)
+        return bool(w) and w.getAllText() != tree.editing_baseline_text
+
+    # @+node:sa.20260905250000.2: *4* LeoTree.follow_model_headline
+    def follow_model_headline(self, p: Position, s: str) -> None:
+        """
+        Make this view's headline widget for p show s, the model's text.
+
+        The headline half of what stage 6 did for body text. A headline widget
+        is authoritative only in the two cases widget_owns_headline names; the
+        rest of the time it must track the model, because onHeadChanged commits
+        whatever the widget holds. A widget left stale by a model-only rename
+        -- from a script, from undo, from another window -- therefore does not
+        merely look wrong, it *reverts* the rename the next time anything
+        commits it.
+        """
+        tree = self
+        if tree.widget_owns_headline(p.v):
+            return
+        tree.setHeadline(p, s)
+        if tree.editing_p is not None and tree.editing_p.v is p.v:
+            # The open editor and the model agree again as of now.
+            tree.editing_baseline_text = s
+
+    # @+node:sa.20260905250000.3: *4* LeoTree.begin_edit_headline
+    def begin_edit_headline(self, p: Position) -> None:
+        """
+        Record that this view's headline editor now speaks for p.
+
+        The baseline is what the editor *shows*, not p.h. The two can differ
+        legitimately and lastingly: onHeadChanged collapses newlines and
+        truncates at 1000 characters on the way into the model but leaves the
+        widget as the user typed it, so seeding from p.h would mark an
+        untouched editor dirty forever afterwards.
+        """
+        tree = self
+        tree.editing_p = p.copy() if p else None
+        if not p:
+            tree.editing_baseline_text = None
+            return
+        w = tree.headline_wrapper(p)
+        tree.editing_baseline_text = w.getAllText() if w else p.h
+
     # @+node:ekr.20040803072955.91: *4* LeoTree.onHeadChanged
     # Tricky code: do not change without careful thought and testing.
     # Important: This code *is* used by the leoBridge module.
-    def onHeadChanged(self, p: Position, undoType: str = 'Typing') -> None:
+    def onHeadChanged(self, p: Position, undoType: str = 'Typing', s: str | None = None) -> None:
         """
         Officially change a headline.
         Set the old undo text to the previous revert point.
+
+        s is the new headline. Omit it and the text comes from this view's
+        headline widget, which is what a widget-driven edit wants. A view with
+        no headline widget -- leo/tui, leoserver, a script -- passes the text
+        instead, so that committing a headline does not require owning a
+        wrapper. (The parameter is not new: the old wxGui front end called it
+        this way before it was dropped.)
         """
-        c, u, w = self.c, self.c.undoer, self.headline_wrapper(p)
-        if not w:
-            g.trace('no w')
-            return
+        c, u = self.c, self.c.undoer
+        if s is None:
+            w = self.headline_wrapper(p)
+            if not w:
+                g.trace('no w')
+                return
+            s = w.getAllText()
         ch = '\n'  # We only report the final keystroke.
-        s = w.getAllText()
         # @+<< truncate s if it has multiple lines >>
         # @+node:ekr.20040803072955.94: *5* << truncate s if it has multiple lines >>
         # #3633: Replace newlines with a blank.
@@ -1094,7 +1177,11 @@ class LeoTree:
             return  # The hook claims to have handled the event.
         # Handle undo.
         undoData = u.beforeChangeHeadline(p)
-        p.initHeadString(s)  # change p.h *after* calling undoer's before method.
+        old_committing_v, self._committing_v = self._committing_v, p.v
+        try:
+            p.initHeadString(s)  # change p.h *after* calling undoer's before method.
+        finally:
+            self._committing_v = old_committing_v
         if not c.changed:
             c.setChanged()
         # New in Leo 4.4.5: we must recolor the body because
@@ -1114,17 +1201,19 @@ class LeoTree:
         if self.editing_p is None:
             # Nothing was being edited, so there is nothing to commit.
             #
-            # Committing anyway is a real bug, not just waste: onHeadChanged
-            # takes the new headline from headline_wrapper(p) rather than from
-            # p.h, so any code that renamed the node through the model leaves
-            # that widget stale. c.endEditing runs at the top of u.undo, and a
-            # stale widget there makes Leo record a headline change that the
-            # user never made -- which pushes an undo bead and silently eats
-            # the next undo. LeoQtTree.endEditLabel already returns early when
-            # there is no editor; the base class did not, so the fault only
-            # showed up in non-Qt views.
+            # Committing anyway was a real bug, not just waste. onHeadChanged
+            # takes the new headline from headline_wrapper(p), and widgets used
+            # to be left stale by any rename made through the model; since
+            # c.endEditing runs at the top of u.undo, that made Leo record a
+            # headline change the user never made, pushing an undo bead and
+            # silently eating the next undo. Widgets now follow the model (see
+            # follow_model_headline), so the stale text is gone -- but the
+            # guard stays: with no edit in progress there is still nothing to
+            # commit, and going through onHeadChanged would fire the headkey
+            # hooks for a rename that did not happen here.
             return
         self.editing_p = None
+        self.editing_baseline_text = None
         # Important: this will redraw if necessary.
         self.onHeadChanged(self.c.p)
 
@@ -1634,7 +1723,7 @@ class NullTree(LeoTree):
     ) -> tuple[Widget, StringTextWrapper] | None:
         """Start editing p's headline."""
         self.endEditLabel()
-        self.editing_p = p.copy() if p else None
+        self.begin_edit_headline(p)
         if p:
             wrapper = StringTextWrapper(c=self.c, name='head-wrapper')
             e = None
