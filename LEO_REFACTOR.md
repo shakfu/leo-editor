@@ -43,7 +43,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 920 tests, passing against **real PyQt6** and with no Qt at all |
+| 0 — Safety net | **done** — 920 tests with no Qt at all; 910 of them last run against **real PyQt6** |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
