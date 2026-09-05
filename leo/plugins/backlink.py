@@ -230,7 +230,9 @@ class backlinkController:
         if not new_p:
             g.es(f"unl not found: {our_unl!r}. not creating backlink")
             return
-        new_c = new_p.v.context
+        # .context is the document; .context.c is a window. backlinkController
+        # and setChanged below are commander members.
+        new_c = new_p.v.context.c
         if not hasattr(new_c, 'backlinkController'):
             g.es('No controller. not creating backlink')
             return

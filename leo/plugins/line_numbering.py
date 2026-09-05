@@ -156,7 +156,7 @@ def finish_update(c):
 def universal_line_numbers(root, target_p, delim_st, delim_en):
     """Returns tuple of line numbers corresponding to lines of
     target_p body, in a file generated from root."""
-    c = root.v.context
+    c = root.v.context.c  # A window: user_dict is a commander member.
     roots = c.user_dict.get('line_numbering_roots', set())
     roots.add(root.gnx)
     c.user_dict['line_numbering_roots'] = roots

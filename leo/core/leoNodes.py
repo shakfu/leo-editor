@@ -1553,7 +1553,7 @@ class Position:
             if p:
                 assert p  # PR #4767: suppress mypy warning.
                 if limit:
-                    done, val = self.checkVisBackLimit(limit, limitIsVisible, p)
+                    done, val = self.checkVisBackLimit(c, limit, limitIsVisible, p)
                     if done:
                         return val  # A position or None
                 if p.isVisible(c):
@@ -1563,13 +1563,17 @@ class Position:
     # @+node:ekr.20090715145956.6166: *5* checkVisBackLimit
     def checkVisBackLimit(
         self,
+        c: Cmdr,
         limit: Position,
         limitIsVisible: bool,
         p: Position,
     ) -> tuple[bool, Position | None]:
         """Return done, p or None"""
+        # c is passed in, not taken from p.v.context: "is p visible" is a
+        # question about a *window* -- p.isVisible reads c.hoistStack and
+        # c.shouldBeExpanded -- and p.v.context is the document. The caller
+        # already holds the right commander.
         assert p.v  # PR #4767: suppress mypy warning.
-        c = p.v.context
         if limit == p:
             if limitIsVisible and p.isVisible(c):
                 return True, p

@@ -330,7 +330,7 @@ def OpenProcess(p):
     ErrThread.start()
     # Mark and select the node.
     RunNode.setMarked()
-    c = RunNode.v.context
+    c = RunNode.v.context.c  # A window: selectPosition picks one.
     c.selectPosition(RunNode)
     if os.name in ("nt", "dos"):
         c.redraw()

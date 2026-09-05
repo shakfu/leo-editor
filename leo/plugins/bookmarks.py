@@ -309,7 +309,7 @@ def cmd_switch(event):
         g.es("No alternate position known")
         return
 
-    oc = ov.context
+    oc = ov.context.c
     op = oc.vnode2position(ov)
     if not oc.positionExists(op):
         g.es("No alternate position known")
@@ -372,7 +372,7 @@ def cmd_bookmark(event, child=False, organizer=False, container=None):
         bm.show_list(bm.get_list())
         return
 
-    bc = container.context
+    bc = container.context.c
     bp = bc.vnode2position(container)
     nd = bp.insertAsNthChild(0)
     # pylint: disable=consider-using-ternary
@@ -668,7 +668,7 @@ class BookMarkDisplay:
         # stuff for pane persistence
         self.w._ns_id = '_leo_bookmarks_show:'
         # v might not be in this outline
-        c.db['_leo_bookmarks_show'] = v.context.vnode2position(v).get_UNL()
+        c.db['_leo_bookmarks_show'] = v.context.c.vnode2position(v).get_UNL()
         # else:
         # c.frame.log.createTab(c.p.h[:10])
         # tabWidget = c.frame.log.tabWidget
@@ -716,7 +716,7 @@ class BookMarkDisplay:
         if mods == KeyboardModifier.AltModifier:
             self.edit_bookmark(None, v=row_parent)
             return
-        cmd_bookmark(event={'c': row_parent.context}, container=row_parent)
+        cmd_bookmark(event={'c': row_parent.context.c}, container=row_parent)
 
     # @+node:tbnorth.20160502105134.1: *3* button_clicked
     def button_clicked(self, event, bm, but, up=False):
@@ -752,7 +752,7 @@ class BookMarkDisplay:
             getattr(self, action_name)(bm)
             return
         if action_name == 'add_child':
-            cmd_bookmark_child(event={'c': bm.v.context})
+            cmd_bookmark_child(event={'c': bm.v.context.c})
             return
 
         no_move = action_name == 'navigate'
@@ -797,9 +797,9 @@ class BookMarkDisplay:
             ("Delete", self.delete_bookmark),
             (
                 "Add this node as child bookmark",
-                lambda e: cmd_bookmark_child(event={'c': bm.v.context}),
+                lambda e: cmd_bookmark_child(event={'c': bm.v.context.c}),
             ),
-            ("Add bookmark folder", lambda e: cmd_bookmark_organizer(event={'c': bm.v.context})),
+            ("Add bookmark folder", lambda e: cmd_bookmark_organizer(event={'c': bm.v.context.c})),
         ]
         for action in actions:
             act = QAction(action[0], menu)
@@ -831,7 +831,7 @@ class BookMarkDisplay:
             ("Edit bookmarks in tree", self.edit_bookmark),
             (
                 "Add bookmark folder",
-                lambda e: cmd_bookmark_organizer(event={'c': bm.v.context}, container=container),
+                lambda e: cmd_bookmark_organizer(event={'c': bm.v.context.c}, container=container),
             ),
         ]
         for action in actions:
@@ -861,7 +861,7 @@ class BookMarkDisplay:
         - `url`: url to find
         """
         url = url.strip().replace(' ', '%20')
-        p = self.v.context.vnode2position(self.v)
+        p = self.v.context.c.vnode2position(self.v)
         for node in p.subtree():
             if node.b.split('\n', 1)[0].strip().replace(' ', '%20') == url:
                 return node
@@ -889,7 +889,7 @@ class BookMarkDisplay:
         """Return list of Bookmarks"""
 
         # v might not be in this outline
-        p = self.v.context.vnode2position(self.v)
+        p = self.v.context.c.vnode2position(self.v)
         if not p:
             return None
 
@@ -936,14 +936,14 @@ class BookMarkDisplay:
     # @+node:tbrown.20140103082018.24102: *3* get_unl (bookmarks.py)
     def get_unl(self, p=None):
         """get_unl - Return a UNL which is local (with_file=False)
-        if self.c == self.v.context, otherwise includes the file path.
+        if self.c == self.v.context.c, otherwise includes the file path.
 
         :Parameters:
         - `p`: position to use instead of self.c.p
         """
         p = p or self.c.p
-        c = p.v.context  # just in case it's not self.c
-        if self.v.context == c:
+        c = p.v.context.c  # just in case it's not self.c
+        if self.v.context.c == c:
             # local
             return "#" + p.get_UNL(with_file=False, with_proto=False)
         # not local
@@ -956,7 +956,7 @@ class BookMarkDisplay:
         :Parameters:
         - `links`: Bookmarks to show
         """
-        p = self.v.context.vnode2position(self.v)
+        p = self.v.context.c.vnode2position(self.v)
         if not p:
             return
 
@@ -1093,7 +1093,7 @@ class BookMarkDisplay:
 
     # @+node:tbrown.20130222093439.30271: *3* delete_bookmark
     def delete_bookmark(self, bm):
-        c = bm.v.context
+        c = bm.v.context.c
         p = c.vnode2position(bm.v)
         u = c.undoer
         if p.hasVisBack(c):
@@ -1116,12 +1116,12 @@ class BookMarkDisplay:
     # @+node:tbrown.20140804215436.30052: *3* promote_bookmark
     def promote_bookmark(self, bm):
         """Promote bookmark"""
-        p = bm.v.context.vnode2position(bm.v)
+        p = bm.v.context.c.vnode2position(bm.v)
         p.moveToFirstChildOf(p.parent())
         bm.v.setDirty()
-        bm.v.context.setChanged()
-        bm.v.context.redraw()
-        bm.v.context.bodyWantsFocusNow()
+        bm.v.context.c.setChanged()
+        bm.v.context.c.redraw()
+        bm.v.context.c.bodyWantsFocusNow()
         self.show_list(self.get_list())
 
     # @+node:tbrown.20171128173307.1: *3* rename_bookmark
@@ -1138,8 +1138,8 @@ class BookMarkDisplay:
 
         if txt:
             bm.v.h = txt
-            bm.v.context.redraw()
-            bm.v.context.bodyWantsFocusNow()
+            bm.v.context.c.redraw()
+            bm.v.context.c.bodyWantsFocusNow()
             self.show_list(self.get_list())
 
     # @+node:tbrown.20130601104424.55363: *3* update_bookmark
@@ -1153,9 +1153,9 @@ class BookMarkDisplay:
         g.es("Bookmark updated")
         bm.v.b = new_url
         bm.v.setDirty()
-        bm.v.context.setChanged()
-        bm.v.context.redraw()
-        bm.v.context.bodyWantsFocusNow()
+        bm.v.context.c.setChanged()
+        bm.v.context.c.redraw()
+        bm.v.context.c.bodyWantsFocusNow()
         self.show_list(self.get_list())
 
     # @+node:tbrown.20130222093439.30275: *3* edit_bookmark
@@ -1163,7 +1163,7 @@ class BookMarkDisplay:
         if v is None:
             v = bm.v
 
-        c = v.context
+        c = v.context.c
         self.current = v
         self.second = False
         p = c.vnode2position(v)

@@ -5515,7 +5515,9 @@ class Commands:
     def beautify_script_tree(self, root: Position) -> None:
         """beautify root's entire tree. This code is not yet undoable."""
         assert root.v
-        c = root.v.context
+        # A window: c.p, c.beautify_with_ruff and c.redraw below are all
+        # commander members, not document ones.
+        c = root.v.context.c
         at = c.atFileCommands
         p = c.p
 

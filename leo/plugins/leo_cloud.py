@@ -339,7 +339,7 @@ class LeoCloud:
 
         """
         for v, kwargs, local_hash in to_check:
-            c = v.context
+            c = v.context.c
             p = c.vnode2position(v)
             lc_io = getattr(v, '_leo_cloud_io', None) or self.io_from_node(p)
             subtree = lc_io.get_subtree(lc_io.lc_id)

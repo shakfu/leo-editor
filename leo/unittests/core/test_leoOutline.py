@@ -584,6 +584,36 @@ class TestOutline(LeoUnitTest):
             w.setAllText = original
         self.assertEqual(calls, [], 'the acting view repainted its own widget')
 
+    # @+node:sa.20260905260000.1: *3* TestOutline.test_context_is_not_a_commander
+    def test_context_is_not_a_commander(self):
+        """
+        Code that needs a *window* must say `.context.c`, not `.context`.
+
+        Stage 3 changed VNode.context from a commander to an Outline, and
+        Outline deliberately has no __getattr__ -- the explicit forwarding list
+        *is* the remaining coupling, so it must not be papered over. The cost
+        is that any call site still treating .context as a commander raises
+        AttributeError the first time a user reaches it, rather than at import
+        or in a test.
+
+        These are the paths that were found that way. Each needs a member the
+        document does not have and should not grow: c.getPath here, and
+        c.hoistStack via p.isVisible below.
+        """
+        c = self.c
+        # A saved outline: computeFileUrl only consults c.getPath when the
+        # outline has a file name, which is why an unsaved one hid this.
+        c.outline.mFileName = '/tmp/does-not-need-to-exist.leo'
+        p = c.rootPosition()
+        p.h = '@url some/file.txt'
+        g.getUrlFromNode(p)  # Raised: 'Outline' object has no attribute 'getPath'.
+
+        # p.isVisible reads c.hoistStack, which is per-view and is deliberately
+        # not forwarded. The helper takes the caller's commander now.
+        c.selectPosition(p)
+        p.insertAsLastChild().h = 'child'
+        c.p.copy().moveToVisBack(c)
+
     # @+node:sa.20260905250003.1: *3* TestOutline.test_document_operations_are_owned_by_the_outline
     def test_document_operations_are_owned_by_the_outline(self):
         """

@@ -43,7 +43,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 920 tests with no Qt at all; 910 of them last run against **real PyQt6** |
+| 0 — Safety net | **done** — 921 tests with no Qt at all; 910 of them last run against **real PyQt6** |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -60,7 +60,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 920 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 921 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -75,7 +75,7 @@ and the multi-view behaviour was driven through real Qt widgets and confirmed in
 by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
 importing Leo no longer imports Qt.
 
-The ten tests added since, for the headline half of stage 6, have run headless only.
+The eleven tests added since have run headless only.
 Two of them turn on `LeoQtTree`'s new `begin_edit_headline` bookkeeping, which no
 headless test can reach: **re-run the suite under Qt, and edit a headline by hand in two
 windows, before trusting that part.**
@@ -399,6 +399,29 @@ and `--dump` prints one frame for use in a pipe.
   edit a headline by hand, in two windows, before trusting it.
 - **Body text: the last widget reads are correct where they are.** See stage 6 above —
   the note that called them mechanical was wrong, and they should not be swept.
+- **`VNode.context` is an `Outline`, and every call site that still treats it as a
+  commander is a crash waiting for a user.** Stage 3 changed the meaning of that field
+  and reviewed `leo/core`; it did not sweep the plugins or `g.` helpers, and `Outline`
+  deliberately has no `__getattr__`, so a miss is an `AttributeError` the first time
+  someone reaches it rather than a test failure. Right-clicking a node in the GUI found
+  the first one: `g.getUrlFromNode` → `computeFileUrl` → `c.getPath`, and only for a
+  *saved* outline, which is why no test saw it.
+
+  An AST audit then found the rest, in two shapes — an attribute used directly on a
+  `.context` value, and a `.context` value **passed onward** to a function that expects a
+  commander, which is the shape that actually bit and which grepping cannot see. Fixed in
+  `g.getUrlFromNode`, `g.openUrl`, `p.checkVisBackLimit` (via `p.isVisible`, which reads
+  the per-view `c.hoistStack`), `c.beautify_script_tree`, and five plugins —
+  `bookmarks`, `backlink`, `leo_cloud`, `run_nodes`, `line_numbering`. The audit is clean
+  now apart from three sites in `leoNodes.py` that correctly want the document.
+
+  The rule, and it is worth stating in the source: **`v.context` is the document;
+  `v.context.c` is a window.** The `Outline.c` docstring already said `.context.c` is the
+  grep that lists the remaining coupling — that is exactly what these are.
+
+  Two things follow. Out-of-tree plugins that use `v.context` as a commander will break
+  the same way, and that is a real cost of stage 3 this plan did not price. And the audit
+  scripts should be run again after any change to `Outline`'s forwarding list.
 - **`c.p` is still set inside `LeoTree.set_body_text_after_select`**, which is model
   state assigned during a view refresh. I moved it to `change_current_position`, where
   it belongs, and all 899 tests passed — then reverted it. On Qt, `w.setAllText` runs

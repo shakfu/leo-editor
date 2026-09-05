@@ -8428,7 +8428,9 @@ def getUrlFromNode(p: Position) -> str:
     if not p:
         return ''
     assert p.v
-    c = p.v.context
+    # .context is the document; .context.c is a window. c.getPath, reached
+    # through computeFileUrl below, is a commander method.
+    c = p.v.context.c
     assert c
     table = [p.h, g.splitLines(p.b)[0] if p.b else '']
     table = [s[4:] if g.match_word(s, 0, '@url') else s for s in table]
@@ -8647,7 +8649,9 @@ def openUrl(p: Position) -> None:  # pragma: no cover
         return
     if url := g.getUrlFromNode(p):
         assert p.v
-        c = p.v.context
+        # A window, not the document: the hooks and g.handleUrl below are all
+        # given a commander.
+        c = p.v.context.c
         assert c
         if not g.doHook("@url1", c=c, p=p, url=url):
             g.handleUrl(url, c=c, p=p)
