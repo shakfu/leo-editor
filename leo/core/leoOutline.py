@@ -24,13 +24,16 @@ See LEO_REFACTOR.md for the staged plan this belongs to.
 from __future__ import annotations
 import os
 import re
-from typing import Any, TYPE_CHECKING
+from collections.abc import Generator
+from typing import cast, Any, TYPE_CHECKING
 from leo.core import signal_manager
 from leo.core import leoGlobals as g
 
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
     from leo.core.leoNodes import Position, VNode
+
+    VNodeGenerator = Generator[VNode, None, None]
 # @-<< leoOutline imports and annotations >>
 
 
@@ -110,7 +113,7 @@ class ViewState:
 
     # @+others
     # @+node:sa.20260905170000.2: *3* view_state.__init__
-    def __init__(self, c: Cmdr, inherit_from: ViewState = None) -> None:
+    def __init__(self, c: Cmdr, inherit_from: ViewState | None = None) -> None:
         self.c = c
         self.expanded: set[str] = set()
         self.expanded_positions: dict[str, list] = {}
@@ -168,7 +171,7 @@ class Outline:
 
     # @+others
     # @+node:sa.20260905130000.4: *3* outline.__init__
-    def __init__(self, c: Cmdr, fileName: str = '', relativeFileName: str = '') -> None:
+    def __init__(self, c: Cmdr | None, fileName: str = '', relativeFileName: str = '') -> None:
         """
         Create an Outline owned by commander c, which becomes its first view.
 
@@ -200,7 +203,9 @@ class Outline:
         self.orphan_at_file_nodes: list[str] = []
 
         # Model state owned by the document.
-        self.hiddenRootNode: VNode = None  # Set by Commands.initObjects.
+        # Assigned immediately after construction, by Commands.initObjects or
+        # by leolib.
+        self.hiddenRootNode: VNode = cast('VNode', None)
         # One outline, one undo history. Set by Commands.initObjects; shared by
         # every view. See "Undo across views" in LEO_REFACTOR.md.
         self.undoer: Any = None
@@ -265,7 +270,7 @@ class Outline:
     #     status_changed     v      a dirty or marked bit changed
     #     bulk_changed       None   many nodes changed at once (see batch_events)
 
-    def emit(self, signal: str, v: VNode = None) -> None:
+    def emit(self, signal: str, v: VNode | None = None) -> None:
         """Tell every listener about a change to this document."""
         if signal == 'structure_changed':
             # Checked once per command by c.doCommand, not once per link.
@@ -322,7 +327,7 @@ class Outline:
         signal_manager.connect(self, 'bulk_changed', c.on_model_bulk_changed)
 
     # @+node:sa.20260905200000.1: *3* outline.update_other_views
-    def update_other_views(self, acting_c: Cmdr = None) -> None:
+    def update_other_views(self, acting_c: Cmdr | None = None) -> None:
         """
         Flush pending redraws in every view except the one that just acted.
 
@@ -340,7 +345,7 @@ class Outline:
                 c.outerUpdate()
 
     # @+node:sa.20260905160100.1: *3* outline.revalidate_views
-    def revalidate_views(self, acting_c: Cmdr = None) -> None:
+    def revalidate_views(self, acting_c: Cmdr | None = None) -> None:
         """
         Make sure every view's current position still exists, after a change.
 
@@ -390,13 +395,19 @@ class Outline:
         """
         The view to act on: the one whose command is running, else the primary.
 
+        **None when this outline has no view at all**, which is the normal case
+        for an outline leolib opened. It is annotated Cmdr rather than
+        Cmdr | None because Leo's code is not Optional-aware and widening it
+        here cascades through every caller; the callers that can run headless
+        test it explicitly.
+
         Call sites that need a *commander* rather than a document use this, and
         `.context.c` is therefore the grep that lists the coupling still to be
         removed. Prefer self.views when an operation should reach every view.
         """
         if self._acting_c is not None:
             return self._acting_c
-        return self.views[0] if self.views else None
+        return self.views[0] if self.views else cast('Cmdr', None)
 
     def acting_view(self, c: Cmdr) -> Any:
         """
@@ -453,8 +464,9 @@ class Outline:
         # but keeping leoOutline free of an eager leoNodes import preserves the
         # option of a model package that does not depend on this file.
         from leo.core.leoNodes import Position
+
         children = self.hiddenRootNode.children if self.hiddenRootNode else []
-        v = children[0] if children else None
+        v = children[0] if children else cast('VNode', None)
         return Position(v=v, childIndex=0, stack=None)
 
     def all_unique_positions(self, copy: bool = True) -> Any:
@@ -491,6 +503,7 @@ class Outline:
         """
         if self._fileCommands is None:
             from leo.core import leoFileCommands
+
             self._fileCommands = leoFileCommands.FileCommands(self)
         return self._fileCommands
 
@@ -806,6 +819,7 @@ class Outline:
         """This document's external-file reader/writer, created on demand."""
         if self._atFileCommands is None:
             from leo.core import leoAtFile
+
             self._atFileCommands = leoAtFile.AtFile(self)
         return self._atFileCommands
 
@@ -818,6 +832,7 @@ class Outline:
         """This document's @shadow machinery, created on demand."""
         if self._shadowController is None:
             from leo.core import leoShadow
+
             self._shadowController = leoShadow.ShadowController(self)
         return self._shadowController
 
@@ -830,7 +845,10 @@ class Outline:
         """This document's @persistence machinery, created on demand."""
         if self._persistenceController is None:
             from leo.core import leoPersistence
-            self._persistenceController = leoPersistence.PersistenceDataController(self)
+
+            self._persistenceController = leoPersistence.PersistenceDataController(
+                cast('Cmdr', self)
+            )
         return self._persistenceController
 
     @persistenceController.setter
@@ -852,7 +870,8 @@ class Outline:
             return self.c.importCommands
         if self._importCommands is None:
             from leo.core import leoImport
-            self._importCommands = leoImport.LeoImportCommands(self)
+
+            self._importCommands = leoImport.LeoImportCommands(cast('Cmdr', self))
         return self._importCommands
 
     @property
@@ -909,9 +928,11 @@ class Outline:
     # they read the shared VNode tree and give the same answer for any view).
 
     def createNodeHierarchy(
-        self, heads: list, parent: Position = None, forcecreate: bool = False
+        self, heads: list, parent: Position | None = None, forcecreate: bool = False
     ) -> Position:
-        return self.c.createNodeHierarchy(heads, parent=parent, forcecreate=forcecreate)
+        return self.c.createNodeHierarchy(
+            heads, parent=cast('Position', parent), forcecreate=forcecreate
+        )
 
     def fileName(self) -> str:
         # Owned outright: the document knows its own name.
@@ -952,7 +973,8 @@ class Outline:
 
     @property
     def frame(self) -> Any:
-        return self.c.frame
+        """The acting view's frame, or None when this outline has no view."""
+        return self.c.frame if self.c is not None else None
 
     @property
     def p(self) -> Position:
@@ -973,7 +995,7 @@ class Outline:
             return
         self.c.alert(message)
 
-    def redraw(self, p: Position = None) -> None:
+    def redraw(self, p: Position | None = None) -> None:
         if self.c is None:
             return  # Nothing is drawn, so nothing to redraw.
         self.c.redraw(p)

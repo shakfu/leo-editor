@@ -90,7 +90,7 @@ class OutlineModel:
         ):
             signal_manager.connect(self.outline, signal, self.on_model_changed)
 
-    def on_model_changed(self, v: Any = None, origin: Cmdr = None) -> None:
+    def on_model_changed(self, v: Any | None = None, origin: Cmdr | None = None) -> None:
         if origin is not self.c:
             self.dirty = True
 

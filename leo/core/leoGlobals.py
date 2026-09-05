@@ -66,6 +66,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
     from leo.core.leoGui import LeoGui, LeoKeyEvent, LeoFrame
     from leo.core.leoNodes import Position, VNode
+    from leo.core.leoOutline import Outline
     from leo.core.leoQt import QMouseEvent, QWidget, QEvent
     from leo.plugins.qt_idle_time import IdleTime as QtIdleTime
 
@@ -692,9 +693,7 @@ atAutoNames: set[str] = {
 }
 # The .leo file's XML prolog. Constants, needed by the writer with no app
 # running; LeoApp copies them into the app attributes the rest of Leo uses.
-xml_namespace_url = (
-    'https://leo-editor.github.io/leo-editor/namespaces/leo-python-editor/1.1'
-)
+xml_namespace_url = 'https://leo-editor.github.io/leo-editor/namespaces/leo-python-editor/1.1'
 prolog_prefix_string = '<?xml version="1.0" encoding='
 prolog_postfix_string = '?>'
 prolog_namespace_string = f'xmlns:leo="{xml_namespace_url}"'
@@ -7888,7 +7887,7 @@ def findTopLevelNode(c: Cmdr, headline: str, exact: bool = True) -> Position | N
 # @-others
 # @+node:EKR.20040614071102.1: *3* g.getScript & helpers
 def getScript(
-    c: Cmdr,
+    c: Outline | Cmdr,
     p: Position | None,
     useSelectedText: bool = True,
     forcePythonSentinels: bool = True,
@@ -7899,7 +7898,9 @@ def getScript(
     Return the expansion of all of node p's body text if
     p is not the current node or if there is no text selection.
     """
-    w = c.frame.body.wrapper
+    # No window means no selection to prefer and no current node to fall back
+    # on: p.b is the whole answer. leolib reaches here through p.script.
+    w = c.frame.body.wrapper if c and c.frame else None
     if not p:
         p = c.p
     try:
@@ -7928,7 +7929,7 @@ def getScript(
 
 # @+node:ekr.20170228082641.1: *4* g.composeScript
 def composeScript(
-    c: Cmdr,
+    c: Outline | Cmdr,
     p: Position,
     s: str,
     forcePythonSentinels: bool = True,
@@ -7959,7 +7960,7 @@ def composeScript(
 
 
 # @+node:ekr.20170123074946.1: *4* g.extractExecutableString
-def extractExecutableString(c: Cmdr, p: Position, s: str) -> str:
+def extractExecutableString(c: Outline | Cmdr, p: Position, s: str) -> str:
     """
     Return all lines for the given @language directive.
 

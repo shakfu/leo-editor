@@ -174,8 +174,8 @@ Only hashing each node's **body** exposed it. The test does that.
 - **No commands yet.** `leo/tui` showed all 19 structural commands already work
   against a null frame, so they are view-agnostic in substance; what they are not
   is reachable without a commander.
-- **Four `Outline` members still require a view**: `frame`, `p`,
-  `shouldBeExpanded` and `createNodeHierarchy`. Of 32 members exercised against
+- **Three `Outline` members still require a view**: `p`, `shouldBeExpanded` and
+  `createNodeHierarchy` (`frame` now answers `None`). Of 32 members exercised against
   an outline with no view, those are the only ones that raise; everything else
   either answers from the document or degrades deliberately. `frame` and `p` are
   the honest ones -- there is no window and no selected node -- so the real
@@ -190,7 +190,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 930 tests with no Qt at all; 910 of them last run against **real PyQt6** |
+| 0 — Safety net | **done** — 930 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -216,16 +216,31 @@ $ PYTHONPATH=. python3 -m leo.scripts.check_leo_sync
 LeoPyRef.leo is in sync with all mirrored files.
 ```
 
-The same suite passed against **real PyQt6** in the project's `.venv` as of the stage 6
-commit -- then 910 tests, with only 3 skips instead of 23, so every Qt-only test ran --
-and the multi-view behaviour was driven through real Qt widgets and confirmed in the GUI
-by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
-importing Leo no longer imports Qt.
+All four CI gates pass, headless *and* under real PyQt6 via `uv run`:
 
-The eighteen tests added since have run headless only.
-Two of them turn on `LeoQtTree`'s new `begin_edit_headline` bookkeeping, which no
-headless test can reach: **re-run the suite under Qt, and edit a headline by hand in two
-windows, before trusting that part.**
+```
+ruff check leo         All checks passed!
+ruff format --check    557 files already formatted
+ty check leo           All checks passed!
+run_ci_unit_tests.py   930 passed  (23 skips headless, 4 under Qt)
+check_leo_sync         LeoPyRef.leo is in sync
+```
+
+Headless commander startup dropped from 0.22s to 0.04s, because importing Leo no longer
+imports Qt.
+
+`ty check leo` is worth calling out. `main` passes it clean; this branch had accumulated
+**46 diagnostics** before anyone ran it, and none of the earlier work had. Most were one
+mechanical class -- `param: T = None` where Leo's own style is `T | None = None` -- but
+clearing them surfaced two real bugs of the *same family* as the `VNode.context` crash
+below: `p.script` and `mod_scripting`'s five `source_c=p.v.context` sites both handed an
+`Outline` to code that wanted a commander. `p.script` was broken for any viewless
+outline; it works now. **A type checker found statically what the earlier audit found
+only by crashing.**
+
+What still has no automated cover: `LeoQtTree.begin_edit_headline` is unreachable from
+any headless test, and the Qt-only tests that do run do not open two windows. **Edit a
+headline by hand, in two windows, before trusting that part.**
 
 ### What changed
 

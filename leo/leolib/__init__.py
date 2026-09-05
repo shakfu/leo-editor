@@ -35,24 +35,27 @@ Usage:
     outline.rootPosition().b = 'edited with no window in sight'
     leolib.save(outline)
 """
+
 # @+<< leolib imports >>
 # @+node:sa.20260906100000.2: ** << leolib imports >>
 from __future__ import annotations
 import os
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from leo.core import leoGlobals as g
 from leo.core import leoLanguageData
 from leo.core import leoNodes
 from leo.core.leoOutline import Outline
 
-if TYPE_CHECKING:  # pragma: no cover
-    from leo.core.leoNodes import Position, VNode
 # @-<< leolib imports >>
 
 __all__ = [
-    'Outline', 'new_outline', 'open_outline', 'read_external_files',
-    'save', 'to_xml',
+    'Outline',
+    'new_outline',
+    'open_outline',
+    'read_external_files',
+    'save',
+    'to_xml',
 ]
 
 
@@ -105,6 +108,14 @@ class _MinimalApp:
         # No plugins are loaded, so no hook can fire. This is what makes
         # g.doHook return None immediately rather than looking for a handler.
         self.enablePlugins = False
+        # g.getScript asks. leolib is not the bridge, but it is the same
+        # situation: no window, so p.b is the whole script.
+        self.inBridge = True
+        self.inScript = False
+        self.scriptDict: dict[str, Any] = {}
+        self.scriptResult: Any = None
+        # at.putOpenLeoSentinel asks. Leo's own default.
+        self.force_at_auto_sentinels = False
         # g.es_print_error consults it for a colour. There are no global
         # settings without a settings file, which is the truth here.
         self.config = None
@@ -193,6 +204,7 @@ def open_outline(path: str, read_external: bool = True) -> Outline:
     outline = Outline(None, fileName=path)
     outline.hiddenRootNode = leoNodes.VNode(context=outline, gnx='hidden-root-vnode-gnx')
     from leo.core import leoFileCommands
+
     fc = outline.fileCommands
     fc.mFileName = path
     reader = leoFileCommands.FastRead(outline, fc.gnxDict)
@@ -219,6 +231,7 @@ def read_external_files(outline: Outline) -> int:
     it, which is what Leo itself does.
     """
     from leo.core import leoAtFile
+
     at = leoAtFile.AtFile(outline)
     outline.ignored_at_file_nodes = []
     outline.orphan_at_file_nodes = []

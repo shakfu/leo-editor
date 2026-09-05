@@ -31,7 +31,7 @@ Settings:
 from __future__ import annotations
 import difflib
 import os
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from leo.core import leoGlobals as g
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -43,12 +43,12 @@ if TYPE_CHECKING:  # pragma: no cover
 # @+others
 # @+node:ekr.20080708094444.80: ** class ShadowController
 class ShadowController:
+    # Note: 'c' is a property, not a slot. This class holds the document in
+    # 'outline'; managing shadow files needs settings and paths, both of which
+    # are document-level.
     __slots__ = (
         'a',
         'b',
-        # 'c' is a property, not a slot: this holds the document. Managing
-        # shadow files needs settings and paths, both document-level.
-        'outline',
         'delim1',
         'delim2',
         'dispatch_dict',
@@ -57,6 +57,7 @@ class ShadowController:
         'gnxDict',
         'marker',
         'old_sent_lines',
+        'outline',
         'results',
         'sentinels',
         'shadow_in_home_dir',
@@ -70,9 +71,7 @@ class ShadowController:
 
     # @+others
     # @+node:ekr.20080708094444.79: *3*  x.ctor & x.reloadSettings
-    def __init__(
-        self, context: Any, trace: bool = False, trace_writers: bool = False
-    ) -> None:
+    def __init__(self, context: Any, trace: bool = False, trace_writers: bool = False) -> None:
         """
         Ctor for ShadowController class.
 
@@ -96,7 +95,7 @@ class ShadowController:
         self.reloadSettings()
 
     @property
-    def c(self) -> Any:
+    def c(self) -> Cmdr:
         """The view to act on, or None when this outline has no view at all."""
         return self.outline.c
 
@@ -195,7 +194,6 @@ class ShadowController:
     def shadowPathName(self, filename: str) -> str:
         """Return the full path name of filename, resolved using self.outline.fileName()"""
         x = self
-        c = x.c
         baseDir = x.baseDirName()
         fileDir = g.os_path_dirname(filename)
         # 2011/01/26: bogomil: redirect shadow dir

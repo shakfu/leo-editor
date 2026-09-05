@@ -288,7 +288,7 @@ class LeoFrame:
             # this, but the document already has a tree: wiping it here would
             # destroy the outline the other views are showing.
             children = c.hiddenRootNode.children
-            return children[0] if children else None
+            return children[0] if children else cast('VNode', None)
 
         # #1631: Initialize here, not in p._linkAsRoot.
         c.hiddenRootNode.children = []

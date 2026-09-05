@@ -584,7 +584,7 @@ class ScriptingController:
             func=cb,
             h=h,
             pane='button',
-            source_c=p.v.context,
+            source_c=p.v.context.c,
             tag='local @button',
         )
         return b
@@ -788,7 +788,7 @@ class ScriptingController:
         self.handleRclicks(rclicks)
         # At last we can define the command.
         self.registerAllCommands(
-            args=args, func=cb, h=p.h, pane='button', source_c=p.v.context, tag='@button'
+            args=args, func=cb, h=p.h, pane='button', source_c=p.v.context.c, tag='@button'
         )
 
     # @+node:ekr.20080312071248.2: *4* sc.createCommonCommands
@@ -831,7 +831,7 @@ class ScriptingController:
             func=commonCommandCallback,
             h=p.h,
             pane='button',  # Fix bug 416: use 'button', NOT 'command', and NOT 'all'
-            source_c=p.v.context,
+            source_c=p.v.context.c,
             tag='global @command',
         )
 
@@ -883,7 +883,7 @@ class ScriptingController:
             func=atCommandCallback,
             h=p.h,
             pane='button',  # Fix # 416.
-            source_c=p.v.context,
+            source_c=p.v.context.c,
             tag='local @command',
         )
         g.app.config.atLocalCommandsList.append(p.copy())
@@ -927,7 +927,7 @@ class ScriptingController:
                 func=atCommandCallback,
                 h=p.h,
                 pane='all',
-                source_c=p.v.context,
+                source_c=p.v.context.c,
                 tag='local @rclick',
             )
         g.app.config.atLocalCommandsList.append(p.copy())

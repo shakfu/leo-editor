@@ -1788,7 +1788,6 @@ class Commands:
     def getPathFromNode(self, p: Position) -> str | None:
         return self.outline.getPathFromNode(p)
 
-
     # @+node:ekr.20040803112200: *5* c.is...Position
     # @+node:ekr.20040803155551: *6* c.currentPositionIsRootPosition
     def currentPositionIsRootPosition(self) -> bool:
@@ -2094,7 +2093,7 @@ class Commands:
         self.outline.undoer = u
 
     # @+node:sa.20260905190200.1: *4* c.getBodyText & c.setBodyText
-    def getBodyText(self, p: Position = None) -> str:
+    def getBodyText(self, p: Position | None = None) -> str:
         """
         Return a node's body text, from the *model*.
 
@@ -2108,7 +2107,7 @@ class Commands:
         p = p or c.p
         return p.b if p else ''
 
-    def setBodyText(self, s: str, p: Position = None) -> None:
+    def setBodyText(self, s: str, p: Position | None = None) -> None:
         """
         Set a node's body text in the model, and let every view follow.
 
@@ -2120,7 +2119,7 @@ class Commands:
             c.setBodyString(p, s)
 
     # @+node:sa.20260905250001.1: *4* c.getHeadText & c.setHeadText
-    def getHeadText(self, p: Position = None) -> str:
+    def getHeadText(self, p: Position | None = None) -> str:
         """
         Return a node's headline, from the *model*.
 
@@ -2133,7 +2132,7 @@ class Commands:
         p = p or c.p
         return p.h if p else ''
 
-    def setHeadText(self, s: str, p: Position = None, undoType: str | None = None) -> None:
+    def setHeadText(self, s: str, p: Position | None = None, undoType: str | None = None) -> None:
         """
         Set a node's headline in the model, and let every view follow.
 
@@ -2158,7 +2157,7 @@ class Commands:
     # directly; these are how *this* view learns that someone else changed the
     # document. See LEO_REFACTOR.md, stage 6.
 
-    def on_model_body_changed(self, v: VNode, origin: Commands = None) -> None:
+    def on_model_body_changed(self, v: VNode, origin: Commands | None = None) -> None:
         """Repaint the body pane when another view changed the node we show."""
         c = self
         if origin is c or not c.exists:
@@ -2177,7 +2176,7 @@ class Commands:
         w.setAllText(s)  # Guards onTextChanged, so this cannot loop.
         w.setSelectionRange(min(i, len(s)), min(j, len(s)), insert=ins)
 
-    def on_model_head_changed(self, v: VNode, origin: Commands = None) -> None:
+    def on_model_head_changed(self, v: VNode, origin: Commands | None = None) -> None:
         """
         Follow a headline change made anywhere, in this view's headline widget.
 
@@ -2200,14 +2199,14 @@ class Commands:
             return
         c.redraw_later()
 
-    def on_model_outline_changed(self, v: VNode, origin: Commands = None) -> None:
+    def on_model_outline_changed(self, v: VNode, origin: Commands | None = None) -> None:
         """Redraw when another view changed the shape of the outline."""
         c = self
         if origin is c or not c.exists:
             return
         c.redraw_later()
 
-    def on_model_bulk_changed(self, v: VNode = None, origin: Commands = None) -> None:
+    def on_model_bulk_changed(self, v: VNode | None = None, origin: Commands | None = None) -> None:
         """Refresh everything after a batched change, whoever made it."""
         c = self
         if not c.exists:

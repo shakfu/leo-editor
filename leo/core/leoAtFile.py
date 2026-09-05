@@ -23,6 +23,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
     from leo.core.leoGui import LeoKeyEvent
     from leo.core.leoNodes import VNode
+    from leo.core.leoOutline import Outline
 
     Args = Any
     Value = Any
@@ -128,7 +129,7 @@ class AtFile:
         None when leolib is driving.
         """
         # Ivars.
-        self.outline: Outline = getattr(context, 'outline', context)
+        self.outline: Outline = cast('Outline', getattr(context, 'outline', context))
         self.fileCommands = self.outline.fileCommands
         # Basic status vars.
         self.errors = 0
@@ -165,7 +166,8 @@ class AtFile:
         # From the document's settings, which are Leo's defaults when this
         # outline has no view to carry any.
         self.output_newline = g.getOutputNewline(
-            name=self.outline.config.getString('output-newline'))
+            name=self.outline.config.getString('output-newline')
+        )
         self.page_width = 0
         self.tab_width = self.outline.tab_width or -4
         # User switches: set in reloadSettings.
@@ -184,7 +186,7 @@ class AtFile:
     # @+node:ekr.20171113152939.1: *5* at.reloadSettings
     def reloadSettings(self) -> None:
         """AtFile.reloadSettings"""
-        c = self.c
+
         config = self.outline.config
         self.beautifyOnWrite = config.getBool('beautify-python-code-on-write', default=False)
         self.checkPythonCodeOnWrite = config.getBool('check-python-code-on-write', default=True)
@@ -267,7 +269,8 @@ class AtFile:
             at.output_newline = '\n'
         else:
             at.output_newline = lineending or g.getOutputNewline(
-                name=self.outline.config.getString('output-newline'))
+                name=self.outline.config.getString('output-newline')
+            )
         at.language = self.outline.getLanguage(root)
         at.outputList = []  # For stream output.
         at.page_width = self.outline.getPageWidth(root)
@@ -310,7 +313,7 @@ class AtFile:
     # @+node:ekr.20250405052328.1: *4* at.initSentinelComments
     def initSentinelComments(self, root: Position) -> None:
         """Init at.startSentinelComment and at.endSentinelComment."""
-        at, c = self, self.c
+        at = self
         delim1, delim2, delim3 = self.outline.getDelims(root)
 
         # Use single-line comments if we have a choice.
@@ -382,7 +385,7 @@ class AtFile:
         Open the file given by at.root.
         This will be the private file for @shadow nodes.
         """
-        at, c = self, self.c
+        at = self
         fail = None, None
         is_at_shadow = self.root.isAtShadowFileNode()
         if fromString:  # pragma: no cover
@@ -476,7 +479,7 @@ class AtFile:
         Before Leo 5.6: Move unvisited node to be children of the 'Resurrected
         Nodes'.
         """
-        at, c = self, self.c
+        at = self
         # Find the unvisited nodes.
         if aList := [z for z in root.subtree() if not z.isVisited()]:
             at.c.deletePositionsInList(aList)
@@ -580,7 +583,7 @@ class AtFile:
 
     # @+node:ekr.20190108054317.1: *6* at.findFilesToRead
     def findFilesToRead(self, root: Position, all: bool) -> list[Position]:  # pragma: no cover
-        c = self.c
+
         p = root.copy()
         scanned_nodes: set[tuple[str, str]] = set()
         files: list[Position] = []
@@ -861,7 +864,6 @@ class AtFile:
     # @+node:ekr.20090225080846.3: *5* at.readOneAtEditNode
     def readOneAtEditNode(self, p: Position) -> None:  # pragma: no cover
         at = self
-        c = at.c
         ic = self.outline.importCommands
         fn = self.outline.fullPath(p)
         _, ext = g.os_path_splitext(fn)
@@ -888,7 +890,7 @@ class AtFile:
                 head = '@nocolor\n'
         p.b = head + g.toUnicode(s, encoding=encoding, reportErrors=True)
         g.doHook('after-edit', p=p)
-        g.doHook('after-reading-external-file', c=c, p=p)
+        g.doHook('after-reading-external-file', c=self.c, p=p)
 
     # @+node:ekr.20241023135739.1: *5* at.readOneAtJupytextNode
     def readOneAtJupytextNode(self, root: Position) -> None:  # pragma: no cover
@@ -968,7 +970,7 @@ class AtFile:
 
     # @+node:ekr.20080712080505.1: *6* at.importAtShadowNode
     def importAtShadowNode(self, p: Position) -> bool:  # pragma: no cover
-        c, ic = self.c, self.outline.importCommands
+        ic = self.outline.importCommands
         fn = self.outline.fullPath(p)
         if not g.os_path_exists(fn):
             g.error(f"not found: {p.h!r}", nodeLink=p.get_UNL())
@@ -1023,7 +1025,7 @@ class AtFile:
         Parse the sentinel line s.
         If the sentinel is valid, set at.encoding, at.readVersion
         """
-        at, c = self, self.c
+        at = self
         # Set defaults.
         encoding = self.outline.config.default_derived_file_encoding
         readVersion = ''
@@ -1222,7 +1224,7 @@ class AtFile:
     @cmd('write-at-auto-nodes')
     def writeAtAutoNodes(self, event: LeoKeyEvent | None = None) -> None:  # pragma: no cover
         """Write all @auto nodes in the selected outline."""
-        at, c, p = self, self.c, self.c.p
+        at, p = self, self.c.p
         self.outline.init_error_dialogs()
         after, found = p.nodeAfterTree(), False
         while p and p != after:
@@ -1246,7 +1248,7 @@ class AtFile:
     @cmd('write-dirty-at-auto-nodes')  # pragma: no cover
     def writeDirtyAtAutoNodes(self, event: LeoKeyEvent | None = None) -> None:
         """Write all dirty @auto nodes in the selected outline."""
-        at, c, p = self, self.c, self.c.p
+        at, p = self, self.c.p
         self.outline.init_error_dialogs()
         after, found = p.nodeAfterTree(), False
         while p and p != after:
@@ -1270,7 +1272,7 @@ class AtFile:
     @cmd('write-at-shadow-nodes')
     def writeAtShadowNodes(self, event: LeoKeyEvent | None = None) -> bool:  # pragma: no cover
         """Write all @shadow nodes in the selected outline."""
-        at, c, p = self, self.c, self.c.p
+        at, p = self, self.c.p
         self.outline.init_error_dialogs()
         after, found = p.nodeAfterTree(), False
         while p and p != after:
@@ -1296,7 +1298,7 @@ class AtFile:
     @cmd('write-dirty-at-shadow-nodes')
     def writeDirtyAtShadowNodes(self, event: LeoKeyEvent | None = None) -> bool:  # pragma: no cover
         """Write all @shadow nodes in the selected outline."""
-        at, c, p = self, self.c, self.c.p
+        at, p = self, self.c.p
         self.outline.init_error_dialogs()
         after, found = p.nodeAfterTree(), False
         while p and p != after:
@@ -1595,7 +1597,7 @@ class AtFile:
 
     # @+node:ekr.20041005105605.151: *6* at.writeMissing & helper
     def writeMissing(self, p: Position) -> None:  # pragma: no cover
-        at, c = self, self.c
+        at = self
         writtenFiles = False
         self.outline.init_error_dialogs()
         # #1450.
@@ -2001,14 +2003,15 @@ class AtFile:
     def adjustTargetLanguage(self, fn: str) -> None:  # pragma: no cover
         """Use the language implied by fn's extension if
         there is a conflict between it and self.outline.target_language."""
-        at = self
-        c = at.c
+
         _, ext = g.os_path_splitext(fn)
         if ext:
             if ext.startswith('.'):
                 ext = ext[1:]
             if language := g.app.extension_dict.get(ext):
-                self.outline.target_language = language
+                # at.language, not the document's: this is the language
+                # implied by *this file's* extension.
+                self.language = language
             else:
                 # An unknown language.
                 # Use the default language, **not** 'unknown_language'
@@ -2018,7 +2021,7 @@ class AtFile:
     # @+node:ekr.20190109160056.1: *6* at.atAsisToString
     def atAsisToString(self, root: Position) -> str:  # pragma: no cover
         """Write the @asis node to a string."""
-        at, c = self, self.c
+        at = self
         self.outline.endEditing()
         fileName = at.initWriteIvars(root)
         try:
@@ -2033,7 +2036,7 @@ class AtFile:
     # @+node:ekr.20190109160056.2: *6* at.atAutoToString
     def atAutoToString(self, root: Position) -> str:
         """Write the root @auto node to a string, and return it."""
-        at, c = self, self.c
+        at = self
         try:
             self.outline.endEditing()
             fileName = at.initWriteIvars(root)
@@ -2050,7 +2053,7 @@ class AtFile:
     # @+node:ekr.20230804025627.1: *6* at.atCleanToString
     def atCleanToString(self, root: Position) -> str:  # pragma: no cover
         """Write one @clean node to a string."""
-        at, c = self, self.c
+        at = self
         self.outline.endEditing()
         fileName = at.initWriteIvars(root)
         try:
@@ -2065,7 +2068,7 @@ class AtFile:
     # @+node:ekr.20190109160056.3: *6* at.atEditToString
     def atEditToString(self, root: Position) -> str:  # pragma: no cover
         """Write one @edit node."""
-        at, c = self, self.c
+        at = self
         try:
             self.outline.endEditing()
             if root.hasChildren():
@@ -2089,7 +2092,7 @@ class AtFile:
     # @+node:ekr.20190109142026.1: *6* at.atFileToString
     def atFileToString(self, root: Position, sentinels: bool = True) -> str:  # pragma: no cover
         """Write an external file to a string, and return its contents."""
-        at, c = self, self.c
+        at = self
         try:
             self.outline.endEditing()
             at.initWriteIvars(root)
@@ -2118,7 +2121,7 @@ class AtFile:
 
         This is at.write specialized for scripting.
         """
-        at, c = self, self.c
+        at = self
         try:
             self.outline.endEditing()
             at.initWriteIvars(root)
@@ -2630,7 +2633,7 @@ class AtFile:
     # @+node:ekr.20181024134823.1: *5* at.addToOrphanList
     def addToOrphanList(self, root: Position) -> None:  # pragma: no cover
         """Mark the root as erroneous for self.outline.raise_error_dialogs()."""
-        c = self.c
+
         # Fix #1050:
         root.setOrphan()
         self.outline.orphan_at_file_nodes.append(root.h)
@@ -3072,7 +3075,7 @@ class AtFile:
 
     # @+node:ekr.20041005105605.211: *5* at.putInitialComment
     def putInitialComment(self) -> None:  # pragma: no cover
-        c = self.c
+
         s2 = self.outline.config.getString('output-initial-comment') or ''
         if s2.strip():
             lines = s2.split("\\n")
@@ -3093,7 +3096,7 @@ class AtFile:
         Write or create the given file from the contents.
         Return True if the original file was changed.
         """
-        at, c = self, self.c
+        at = self
         assert root, g.callers()
         root.clearDirty()
 
@@ -3493,7 +3496,7 @@ class FastAtRead:
         Parsing an external file into vnodes is a document operation; self.c is
         None when leolib is driving.
         """
-        self.outline: Outline = getattr(context, 'outline', context)
+        self.outline: Outline = cast('Outline', getattr(context, 'outline', context))
         assert gnx2vnode is not None
         # The global fc.gnxDict. Keys are gnx's, values are vnodes.
         self.gnx2vnode: dict[str, VNode] = gnx2vnode

@@ -216,12 +216,13 @@ class LeoKeyEvent:
             return
         # Import Qt lazily: leoGui.py must stay importable without Qt.
         # Without Qt, no widget can match any of the tests below.
+        QtWidgets: Any = None
         try:
-            from leo.core.leoQt import QtWidgets
+            from leo.core.leoQt import QtWidgets  # noqa: F811
             from leo.plugins.qt_frame import LeoQTreeWidget
             from leo.plugins.qt_text import QLineEditWrapper, QTextEditWrapper
         except ImportError:  # pragma: no cover
-            QtWidgets = None
+            pass
         if QtWidgets is not None:
             if isinstance(w, QtWidgets.QTextEdit):
                 # Inject the `leo_wrapper` ivar into the widget so that this method

@@ -11,7 +11,7 @@ import os
 import re
 import time
 import uuid
-from typing import Any, TYPE_CHECKING
+from typing import cast, Any, TYPE_CHECKING
 from leo.core import leoGlobals as g
 
 # Third party.
@@ -48,7 +48,7 @@ class NodeIndices:
         self.setTimeStamp()
 
     # @+node:ekr.20150321161305.8: *3* ni.check_gnx
-    def check_gnx(self, c: Cmdr, gnx: str, v: VNode) -> None:
+    def check_gnx(self, c: Outline | Cmdr, gnx: str, v: VNode) -> None:
         """Check that no vnode exists with the given gnx in fc.gnxDict."""
         fc = c.fileCommands
         if gnx == 'hidden-root-vnode-gnx':
@@ -139,7 +139,7 @@ class NodeIndices:
         return gnx
 
     # @+node:ekr.20150322134954.1: *3* ni.new_vnode_helper
-    def new_vnode_helper(self, c: Cmdr, gnx: str | None, v: VNode) -> None:
+    def new_vnode_helper(self, c: Outline, gnx: str | None, v: VNode) -> None:
         """Handle all gnx-related tasks for VNode.__init__."""
         ni = self
         # Special case for the c.hiddenRootNode. This eliminates a hack in c.initObjects.
@@ -1970,6 +1970,8 @@ class Position:
         p = self
         assert p.v  # PR #4767: suppress mypy warning.
         return g.getScript(
+            # The document: g.getScript needs the language and the body, both
+            # document-level, and skips the selection when there is no window.
             p.v.context,
             p,
             useSelectedText=False,  # Always return the entire expansion.
@@ -2298,7 +2300,7 @@ class VNode:
         # siblings. It is named .context rather than .c to emphasize its
         # limited usage. Callers may still pass a commander; it is normalized
         # to that commander's outline, so `v.context` is always an Outline.
-        self.context: Outline = getattr(context, 'outline', context)
+        self.context: Outline = cast('Outline', getattr(context, 'outline', context))
 
         # For at.read logic.
         self.at_read: dict[str, set] = {}
@@ -2310,7 +2312,7 @@ class VNode:
         #       v = VNode(c)
         #       g.app.nodeIndices.new_vnode_helper(c,gnx,v)
         if g.app and g.app.nodeIndices:
-            g.app.nodeIndices.new_vnode_helper(context, gnx, self)
+            g.app.nodeIndices.new_vnode_helper(self.context, gnx, self)
             assert self.fileIndex, g.callers()
             return
         raise ValueError(f"VNode.__init__: not initialized: {g.callers()}")

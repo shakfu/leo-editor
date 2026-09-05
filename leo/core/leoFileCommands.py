@@ -20,7 +20,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
-from typing import Any, IO, TYPE_CHECKING
+from typing import cast, Any, IO, TYPE_CHECKING
 import zipfile
 from xml.etree import ElementTree
 import xml.sax
@@ -35,6 +35,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
     from leo.core.leoGui import LeoKeyEvent
     from leo.core.leoNodes import Position, VNode
+    from leo.core.leoOutline import Outline
 
     Conn = sqlite3.Connection
     Element = ElementTree.Element
@@ -119,7 +120,7 @@ class FastRead:
         parts that genuinely want a window -- restoring the saved geometry and
         the selected node -- and is None when leolib opens a file with no view.
         """
-        self.outline: Outline = getattr(context, 'outline', context)
+        self.outline: Outline = cast('Outline', getattr(context, 'outline', context))
         self.gnx2vnode = gnx2vnode
 
     @property
@@ -298,7 +299,12 @@ class FastRead:
             y, x = windowSpot  # #1263: (top, left)
         r1, r2 = d.get('r1'), d.get('r2')
         self.outline.window_geometry = {
-            'width': w, 'height': h, 'left': x, 'top': y, 'r1': r1, 'r2': r2,
+            'width': w,
+            'height': h,
+            'left': x,
+            'top': y,
+            'r1': r1,
+            'r2': r2,
         }
         if 'size' in g.app.debug:
             g.trace(w, h, x, y, self.outline.shortFileName())
@@ -325,7 +331,7 @@ class FastRead:
     # @+node:ekr.20180708060437.1: *5* fast.getGlobalData
     def getGlobalData(self) -> dict[str, Value]:
         """Return a dict containing all global data."""
-        c = self.c
+
         try:
             window_pos = self.outline.db.get('window_position')
             r1 = float(self.outline.db.get('body_outline_ratio', '0.5'))
@@ -511,7 +517,9 @@ class FastRead:
         windowSpot = g.app.loadManager.options.get('windowSpot')
 
         # Priority 2: The cache.
-        db_top, db_left, db_height, db_width = self.outline.db.get('window_position', (None, None, None, None))
+        db_top, db_left, db_height, db_width = self.outline.db.get(
+            'window_position', (None, None, None, None)
+        )
 
         # Priority 3: The globals dict in the .leojs file.
         #             Leo doesn't write the globals element, but leoInteg might.
@@ -655,7 +663,7 @@ class FileCommands:
         commander only where it genuinely needs a window, through self.c.
         A commander argument is normalized the way VNode.__init__ does it.
         """
-        self.outline: Outline = getattr(context, 'outline', context)
+        self.outline: Outline = cast('Outline', getattr(context, 'outline', context))
         # self.frame used to be set here from c.frame. It was never read.
         self.initIvars()
 

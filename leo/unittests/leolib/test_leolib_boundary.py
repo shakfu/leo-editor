@@ -12,6 +12,7 @@ It runs in a subprocess because import state is global and permanent: any other
 test that has already imported leoFrame would make an in-process check pass for
 the wrong reason.
 """
+
 # @+<< test_leolib_boundary imports >>
 # @+node:sa.20260906110000.2: ** << test_leolib_boundary imports >>
 import json
@@ -26,8 +27,7 @@ from leo.core.leoTest2 import LeoUnitTest
 # @-<< test_leolib_boundary imports >>
 
 # The modules that make Leo a Qt application. leolib exists to not need them.
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 LEO_PY_REF = os.path.join(REPO, 'leo', 'core', 'LeoPyRef.leo')
 
 VIEW_MODULES = (
@@ -48,12 +48,17 @@ VIEW_MODULES = (
 # @+node:sa.20260906110000.3: ** def run_isolated
 def run_isolated(body: str) -> str:
     """Run body in a fresh interpreter with the repo on sys.path; return stdout."""
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))))
+    repo = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    )
     env = dict(os.environ, PYTHONPATH=repo)
     proc = subprocess.run(
         [sys.executable, '-c', textwrap.dedent(body)],
-        capture_output=True, text=True, env=env, cwd=repo, timeout=120,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=repo,
+        timeout=120,
     )
     if proc.returncode != 0:
         raise AssertionError(f"subprocess failed:\n{proc.stdout}\n{proc.stderr}")
@@ -215,6 +220,7 @@ class TestLeolibApi(LeoUnitTest):
     # @+node:sa.20260906110000.9: *3* TestLeolibApi.test_open_outline
     def test_open_outline(self):
         from leo import leolib
+
         # An absolute path: LeoUnitTest does not promise a cwd, and
         # leolib.open_outline resolves relative paths against it as any
         # library should.
@@ -228,6 +234,7 @@ class TestLeolibApi(LeoUnitTest):
     # @+node:sa.20260906110000.10: *3* TestLeolibApi.test_round_trip
     def test_round_trip(self):
         from leo import leolib
+
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, 'x.leo')
             o = leolib.new_outline()
@@ -242,12 +249,14 @@ class TestLeolibApi(LeoUnitTest):
     # @+node:sa.20260906110000.11: *3* TestLeolibApi.test_open_missing_file
     def test_open_missing_file(self):
         from leo import leolib
+
         with self.assertRaises(FileNotFoundError):
             leolib.open_outline('/no/such/file.leo')
 
     # @+node:sa.20260906110000.12: *3* TestLeolibApi.test_save_without_a_name
     def test_save_without_a_name(self):
         from leo import leolib
+
         with self.assertRaises(ValueError):
             leolib.save(leolib.new_outline())
 
