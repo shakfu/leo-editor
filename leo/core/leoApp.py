@@ -577,10 +577,10 @@ class LeoApp:
     # @+node:ekr.20031218072017.1417: *5* app.define_global_constants
     def define_global_constants(self) -> None:
         # self.prolog_string = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-        xml_url = 'https://leo-editor.github.io/leo-editor/namespaces/leo-python-editor/1.1'
-        self.prolog_prefix_string = '<?xml version="1.0" encoding='
-        self.prolog_postfix_string = '?>'
-        self.prolog_namespace_string = f'xmlns:leo="{xml_url}"'
+        # Defined in leoGlobals: the .leo writer needs them with no app running.
+        self.prolog_prefix_string = g.prolog_prefix_string
+        self.prolog_postfix_string = g.prolog_postfix_string
+        self.prolog_namespace_string = g.prolog_namespace_string
 
     # @+node:ekr.20120522160137.9909: *5* app.define_language_delims_dict
     def define_language_delims_dict(self) -> None:
@@ -958,31 +958,14 @@ class LeoApp:
     # @+node:ekr.20140729162415.18086: *5* app.init_at_auto_names
     def init_at_auto_names(self) -> None:
         """Init the app.atAutoNames set."""
-        self.atAutoNames = set(
-            [
-                "@auto-rst",
-                "@auto",
-            ]
-        )
+        # Defined in leoGlobals: VNode needs them with no app running.
+        self.atAutoNames = set(g.atAutoNames)
 
     # @+node:ekr.20140729162415.18091: *5* app.init_at_file_names
     def init_at_file_names(self) -> None:
         """Init the app.atFileNames set."""
-        self.atFileNames = set(
-            [
-                "@asis",
-                "@clean",
-                "@edit",
-                "@file-asis",
-                "@file-thin",
-                "@file-nosent",
-                "@file",
-                "@jupytext",
-                "@nosent",
-                "@shadow",
-                "@thin",
-            ]
-        )
+        # Defined in leoGlobals: VNode needs them with no app running.
+        self.atFileNames = set(g.atFileNames)
 
     # @+node:ekr.20090717112235.6007: *4* app.computeSignon & printSignon
     def computeSignon(self) -> None:

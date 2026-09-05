@@ -36,6 +36,107 @@ upstreamable on their own merits.
 
 ---
 
+## The target
+
+```
+leolib                the model and its machinery. No view, ever.
+   ^
+   +-- leogui         the Qt front end      (today: leo/plugins/qt_*)
+   +-- leotui         the terminal front end (today: leo/tui)
+   +-- leoweb         the web front end      (today: leoserver, as a seed)
+```
+
+Each front end can open, create, edit, view and save `.leo` files; none is
+privileged; and leolib never imports any of them.
+
+`leo/leolib/` exists and holds that line with a test. What it is not yet is a
+separate *place*: the modules still live in `leo/core`, and leolib names the
+subset of them that is view-free. Moving the files is mechanical and worth doing
+only once the boundary has stopped moving. The boundary is the real artifact.
+
+**Measured.** Opening `leo/core/LeoPyRef.leo`:
+
+| via | leo modules imported | view modules among them |
+|---|---|---|
+| `leoBridge` + null gui | 99 | **9** — leoFrame, leoGui, leoKeys, leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground |
+| `leolib.open_outline` | **7** | **0** |
+
+A full round trip -- create, edit, save, reopen, edit, save -- stays at 7 and 0.
+Files written by leolib open in Leo and vice versa; that is checked both ways.
+
+Two of the 99 numbers deserve a footnote, because the first reading of them was
+wrong. 36 of the modules are `leo/plugins/importers/*` and `leo/plugins/writers/*`
+-- language parsers for `@auto` files, which are model machinery and belong in
+leolib rather than in a front end. And the *import* graph was already clean:
+stage 1 did its job, and `import leoCommands` pulls in 6 modules with no view
+among them. All 9 view modules arrive at **runtime**, from `Commands.__init__`
+building a frame, a menu, a key handler, a chapter controller, vim and a
+colorizer. The coupling was never in the imports. It was in the construction.
+
+### What made it possible
+
+Almost nothing, which is the surprise. The reader needed four commander members
+(`c.db`, `c.fileCommands`, `c.shortFileName`, `c.frame`) and all four `c.frame`
+uses were *restoring the saved window size*. That was the only thing in the whole
+.leo reader that required a window.
+
+- **`Outline` may now have no views at all.** `Outline(None)` is a document
+  nobody is looking at.
+- **The `Outline` owns `fileCommands`**, and `c.fileCommands` forwards to it.
+  It had been created per commander, so two views of one outline had two gnx
+  indices -- a latent bug this found rather than introduced.
+- **`FileCommands` and `FastRead` take an Outline**, normalizing a commander
+  argument the way `VNode.__init__` does. `self.c` is a property for the parts
+  that genuinely want a window, and is `None` when there is none.
+- **Window geometry is data.** `fast.scanGlobals` records it on
+  `outline.window_geometry` instead of calling `c.frame.setTopGeometry`. A front
+  end applies it; a headless reader ignores it.
+- **`outline.db`** answers for the document. It always was per-document --
+  leoCache keys every row by `c.mFileName` -- but was only reachable through a
+  commander.
+- **`rootPosition`, `all_unique_positions`, `all_unique_nodes`,
+  `clearAllVisited`, `gnx_kind` and the model half of `setBodyString`** moved
+  onto the `Outline`, with `Commands` forwarding.
+- **`v.context.frame.tree.generation` is gone.** The model bumped a counter on
+  a *widget* in three places, and nothing in the entire tree ever read it. It is
+  `outline.generation` now: counting changes to the tree is the document's job.
+- **`g.app.atAutoNames`, `atFileNames` and the XML prolog strings** are defined
+  in `leoGlobals` and copied into `LeoApp`. They are constants, and `VNode`
+  needs them to answer "is this an `@file` node?" with no application running.
+
+`leolib` installs a deliberately minimal `g.app` -- not a `NullGui`, because a
+null object answers every question, so a view dependency that crept back in
+would resolve quietly instead of raising. The one thing it must provide is the
+gnx allocator, and `leoNodes` has carried a comment asking for exactly this
+since long before any of this work:
+
+```
+# To make VNode's independent of Leo's core,
+# wrap all calls to the VNode ctor
+```
+
+That allocator is document-level and should end up on the `Outline`. It is the
+next thing to move.
+
+### Still to do
+
+- **`leogui` / `leotui` / `leoweb` do not exist as packages.** `leo/tui` is the
+  terminal front end and needs renaming; the Qt front end is spread across
+  `leo/plugins/qt_*` and the Qt halves of `leoFrame`; `leoweb` is unstarted, with
+  `leoserver` as the obvious seed.
+- **leolib cannot yet read or write `@file` nodes.** `leolib.save` writes the
+  `.leo` file only, deliberately: conflating external files would make a headless
+  save touch the user's source tree as a side effect. `leoAtFile` scores 0
+  `c.frame` and 1 `g.app.gui`, so it should come across easily -- and it is what
+  the 36 importer/writer plugins hang off.
+- **No commands yet.** `leo/tui` showed all 19 structural commands already work
+  against a null frame, so they are view-agnostic in substance; what they are not
+  is reachable without a commander.
+- **`Outline` still forwards 18 members to a commander.** That list is the
+  remaining coupling and the to-do list.
+
+---
+
 ## Status
 
 Branch `decouple-model-gui`. Stages 0 through 6 are **done** apart from one deliberately
@@ -43,7 +144,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 921 tests with no Qt at all; 910 of them last run against **real PyQt6** |
+| 0 — Safety net | **done** — 928 tests with no Qt at all; 910 of them last run against **real PyQt6** |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -60,7 +161,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 921 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 928 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -75,7 +176,7 @@ and the multi-view behaviour was driven through real Qt widgets and confirmed in
 by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
 importing Leo no longer imports Qt.
 
-The eleven tests added since have run headless only.
+The eighteen tests added since have run headless only.
 Two of them turn on `LeoQtTree`'s new `begin_edit_headline` bookkeeping, which no
 headless test can reach: **re-run the suite under Qt, and edit a headline by hand in two
 windows, before trusting that part.**
@@ -436,7 +537,7 @@ and `--dump` prints one frame for use in a pipe.
   with Qt; the events it needs are now live. (Worth a look while you are in there: its
   idle handler walks `c.all_unique_positions()` on every tick, per open window.)
 
-`Outline` currently forwards **22** attributes and methods to its acting view, down from
+`Outline` currently forwards **18** attributes and methods to its acting view, down from
 25. That list is deliberately explicit rather than a `__getattr__`, because it *is* the
 remaining coupling: `grep 'self.c' leo/core/leoOutline.py` is the to-do list for stage 6,
 and it should only ever get shorter.

@@ -681,6 +681,38 @@ url_regex = re.compile(rf"""\b{url_kinds}://[^\s'"]+""")
 tree_popup_handlers: list[Callable] = []  # Set later.
 user_dict: dict[str, Value] = {}  # Non-persistent dictionary for scripts and plugins.
 
+# The @<file> spellings Leo understands. These are constants, and VNode asks
+# for them on every dirty bit, so they live here rather than only on g.app:
+# leoNodes must be able to answer "is this an @file node?" without a running
+# application. LeoApp copies them into app.atAutoNames / app.atFileNames,
+# which stay the names the rest of Leo uses.
+atAutoNames: set[str] = {
+    "@auto-rst",
+    "@auto",
+}
+# The .leo file's XML prolog. Constants, needed by the writer with no app
+# running; LeoApp copies them into the app attributes the rest of Leo uses.
+xml_namespace_url = (
+    'https://leo-editor.github.io/leo-editor/namespaces/leo-python-editor/1.1'
+)
+prolog_prefix_string = '<?xml version="1.0" encoding='
+prolog_postfix_string = '?>'
+prolog_namespace_string = f'xmlns:leo="{xml_namespace_url}"'
+
+atFileNames: set[str] = {
+    "@asis",
+    "@clean",
+    "@edit",
+    "@file-asis",
+    "@file-thin",
+    "@file-nosent",
+    "@file",
+    "@jupytext",
+    "@nosent",
+    "@shadow",
+    "@thin",
+}
+
 # The singleton app object. Set by runLeo.py.
 app: LeoApp = None  # type:ignore # There seems to be no way to init g.app here.
 

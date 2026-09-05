@@ -448,7 +448,10 @@ class Commands:
         self.keyHandler = self.k    = leoKeys.KeyHandlerClass(c)
         self.chapterController      = leoChapters.ChapterController(c)
         self.shadowController       = leoShadow.ShadowController(c)
-        self.fileCommands           = leoFileCommands.FileCommands(c)
+        # c.fileCommands is a property forwarding to c.outline.fileCommands:
+        # one reader/writer, and so one gnx index, per *document*. Creating it
+        # here per commander gave two views of one outline two gnx dicts.
+        self.outline.fileCommands   = leoFileCommands.FileCommands(c.outline)
         self.findCommands           = leoFind.LeoFind(c)
         self.atFileCommands         = leoAtFile.AtFile(c)
         self.importCommands         = leoImport.LeoImportCommands(c)
@@ -2098,9 +2101,9 @@ class Commands:
             if p:
             if not p:
         """
-        c = self
-        v = c.hiddenRootNode.children[0] if c.hiddenRootNode.children else cast(VNode, None)
-        return Position(v=v, childIndex=0, stack=None)
+        # The document's root, not this window's: every view of an outline has
+        # the same one.
+        return self.outline.rootPosition()
 
     # For compatibility with old scripts...
 
@@ -2253,6 +2256,10 @@ class Commands:
         return self.outline.mod_time_cache
 
     @property
+    def fileCommands(self) -> Any:
+        return self.outline.fileCommands
+
+    @property
     def undoer(self) -> Any:
         return self.outline.undoer
 
@@ -2397,10 +2404,7 @@ class Commands:
 
     # @+node:ekr.20031218072017.2985: *5* c.clearAllVisited
     def clearAllVisited(self) -> None:
-        c = self
-        for p in c.all_unique_positions(copy=False):
-            p.v.clearVisited()
-            p.v.clearWriteBit()
+        self.outline.clearAllVisited()
 
     # @+node:ekr.20191215044636.1: *5* c.clearChanged
     def clearChanged(self) -> None:
@@ -2449,14 +2453,8 @@ class Commands:
             w.setAllText(s)
             v.setSelection(0, 0)
             c.recolor()
-
-        # Keep the body text in the VNode up-to-date.
-        if v.b != s:
-            v.setBodyString(s)
-            v.setSelection(0, 0)
-            p.setDirty()
-            if not c.isChanged():
-                c.setChanged()
+        # The model half belongs to the document.
+        c.outline.set_body_in_model(p, s)
 
     # @+node:ekr.20031218072017.2989: *5* c.setChanged
     def setChanged(self, *, force: bool = False) -> None:

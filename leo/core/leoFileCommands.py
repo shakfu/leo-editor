@@ -111,9 +111,21 @@ class FastRead:
     )
     # @-<< FastRead: define nativeVnodeAttributes >>
 
-    def __init__(self, c: Cmdr, gnx2vnode: dict[str, VNode]) -> None:
-        self.c = c
+    def __init__(self, context: Outline | Cmdr, gnx2vnode: dict[str, VNode]) -> None:
+        """
+        Takes an Outline or a commander, normalized as VNode.__init__ does it.
+
+        Reading a .leo file is a document operation. self.c is here for the
+        parts that genuinely want a window -- restoring the saved geometry and
+        the selected node -- and is None when leolib opens a file with no view.
+        """
+        self.outline: Outline = getattr(context, 'outline', context)
         self.gnx2vnode = gnx2vnode
+
+    @property
+    def c(self) -> Cmdr:
+        """The view to act on, or None when this outline has no view at all."""
+        return self.outline.c
 
     # @+others
     # @+node:ekr.20180604110143.1: *3* fast.readFile
@@ -205,12 +217,12 @@ class FastRead:
         self.handleBits()
         return hidden_v, g_element
 
-    # @+node:ekr.20180624125321.1: *4* fast.handleBits (reads c.db)
+    # @+node:ekr.20180624125321.1: *4* fast.handleBits (reads outline.db)
     def handleBits(self) -> None:
-        """Restore the expanded and marked bits from c.db."""
-        c, fc = self.c, self.c.fileCommands
-        expanded = c.db.get('expanded')
-        marked = c.db.get('marked')
+        """Restore the expanded and marked bits from the document's cache."""
+        fc = self.outline.fileCommands
+        expanded = self.outline.db.get('expanded')
+        marked = self.outline.db.get('marked')
         expanded = expanded.split(',') if expanded else []
         marked = marked.split(',') if marked else []
         fc.descendentExpandedList = expanded
@@ -261,11 +273,21 @@ class FastRead:
 
     # @+node:ekr.20180605062300.1: *4* fast.scanGlobals & helper
     def scanGlobals(self) -> None:
-        """Get global data from the cache, with reasonable defaults."""
+        """
+        Get global data from the cache, with reasonable defaults.
+
+        The window size and pane ratios are recorded on the Outline as data
+        rather than pushed straight into c.frame. Reading a .leo file used to
+        require a window for this reason alone -- the only thing in the whole
+        reader that did. A front end applies outline.window_geometry if it
+        wants to; a headless reader ignores it.
+        """
         c = self.c
         d = self.getGlobalData()
-        windowSize = g.app.loadManager.options.get('windowSize')
-        windowSpot = g.app.loadManager.options.get('windowSpot')
+        lm = getattr(g.app, 'loadManager', None)
+        options = lm.options if lm else {}
+        windowSize = options.get('windowSize')
+        windowSpot = options.get('windowSpot')
         if windowSize is not None:
             h, w = windowSize  # checked in LM.scanOption.
         else:
@@ -274,11 +296,16 @@ class FastRead:
             x, y = d.get('left'), d.get('top')
         else:
             y, x = windowSpot  # #1263: (top, left)
+        r1, r2 = d.get('r1'), d.get('r2')
+        self.outline.window_geometry = {
+            'width': w, 'height': h, 'left': x, 'top': y, 'r1': r1, 'r2': r2,
+        }
         if 'size' in g.app.debug:
-            g.trace(w, h, x, y, c.shortFileName())
+            g.trace(w, h, x, y, self.outline.shortFileName())
+        if c is None:
+            return  # leolib: no window to apply it to.
         # c.frame may be a NullFrame.
         c.frame.setTopGeometry(w, h, x, y)
-        r1, r2 = d.get('r1'), d.get('r2')
         c.frame.resizePanesToRatio(r1, r2)
         frameFactory = getattr(g.app.gui, 'frameFactory', None)
         if not frameFactory:
@@ -300,9 +327,9 @@ class FastRead:
         """Return a dict containing all global data."""
         c = self.c
         try:
-            window_pos = c.db.get('window_position')
-            r1 = float(c.db.get('body_outline_ratio', '0.5'))
-            r2 = float(c.db.get('body_secondary_ratio', '0.5'))
+            window_pos = self.outline.db.get('window_position')
+            r1 = float(self.outline.db.get('body_outline_ratio', '0.5'))
+            r2 = float(self.outline.db.get('body_secondary_ratio', '0.5'))
             top, left, height, width = window_pos
             return {
                 'top': int(top),
@@ -350,7 +377,9 @@ class FastRead:
         gnx2ua: dict[str, Value],
         v_elements: Element,
     ) -> VNode:
-        c, fc = self.c, self.c.fileCommands
+        # The document, not a window: `c` here only ever feeds
+        # VNode(context=...), which wants the Outline.
+        c, fc = self.outline, self.outline.fileCommands
 
         # @+<< define v_element_visitor >>
         # @+node:ekr.20180605102822.1: *5* << define v_element_visitor >>
@@ -482,7 +511,7 @@ class FastRead:
         windowSpot = g.app.loadManager.options.get('windowSpot')
 
         # Priority 2: The cache.
-        db_top, db_left, db_height, db_width = c.db.get('window_position', (None, None, None, None))
+        db_top, db_left, db_height, db_width = self.outline.db.get('window_position', (None, None, None, None))
 
         # Priority 3: The globals dict in the .leojs file.
         #             Leo doesn't write the globals element, but leoInteg might.
@@ -504,8 +533,8 @@ class FastRead:
         top, left = toInt(top, 50), toInt(left, 50)
 
         # r1, r2.
-        r1 = float(c.db.get('body_outline_ratio', '0.5'))
-        r2 = float(c.db.get('body_secondary_ratio', '0.5'))
+        r1 = float(self.outline.db.get('body_outline_ratio', '0.5'))
+        r2 = float(self.outline.db.get('body_secondary_ratio', '0.5'))
         if 'size' in g.app.debug:
             g.trace(width, height, left, top, c.shortFileName())
         # c.frame may be a NullFrame.
@@ -543,7 +572,9 @@ class FastRead:
         gnx2ua: dict[str, Value],
         v_elements: Element,
     ) -> VNode | None:
-        c, fc = self.c, self.c.fileCommands
+        # The document, not a window: `c` here only ever feeds
+        # VNode(context=...), which wants the Outline.
+        c, fc = self.outline, self.outline.fileCommands
 
         def v_element_visitor(parent_e: Element, parent_v: VNode) -> None:
             """Visit the given element, creating or updating the parent vnode."""
@@ -614,20 +645,32 @@ class FileCommands:
     # @+others
     # @+node:ekr.20090218115025.4: *3* fc.Birth
     # @+node:ekr.20031218072017.3019: *4* fc.ctor
-    def __init__(self, c: Cmdr) -> None:
-        """Ctor for FileCommands class."""
-        self.c = c
-        self.frame = c.frame
+    def __init__(self, context: Outline | Cmdr) -> None:
+        """
+        Ctor for FileCommands class.
+
+        Takes an Outline or a commander. Reading and writing a .leo file is a
+        *document* operation -- the gnx index in particular is one per outline,
+        never one per window -- so this holds the Outline and reaches for a
+        commander only where it genuinely needs a window, through self.c.
+        A commander argument is normalized the way VNode.__init__ does it.
+        """
+        self.outline: Outline = getattr(context, 'outline', context)
+        # self.frame used to be set here from c.frame. It was never read.
         self.initIvars()
+
+    @property
+    def c(self) -> Cmdr:
+        """The view to act on, or None when this outline has no view at all."""
+        return self.outline.c
 
     # @+node:ekr.20090218115025.5: *4* fc.initIvars
     def initIvars(self) -> None:
         """Init ivars of the FileCommands class."""
         # General...
-        c = self.c
         self.mFileName = ""
         self.fileDate = -1
-        self.leo_file_encoding = c.config.new_leo_file_encoding
+        self.leo_file_encoding = self.outline.leo_file_encoding
         # For reading...
         self.checking = False  # True: checking only: do *not* alter the outline.
         self.descendentExpandedList: list[str] = []  # List of gnx's.
@@ -1391,7 +1434,7 @@ class FileCommands:
         assert root.v
         current, str_pos = None, None
         if c.mFileName:
-            str_pos = c.db.get('current_position')
+            str_pos = self.outline.db.get('current_position')
         if str_pos is None:
             if d := root.v.u:
                 str_pos = d.get('str_leo_pos')
@@ -1792,11 +1835,11 @@ class FileCommands:
         """Put json representation of Leo's cached globals."""
         c = self.c
         width, height, left, top = c.frame.get_window_info()
-        c.db['body_outline_ratio'] = str(c.frame.compute_ratio())
-        c.db['body_secondary_ratio'] = str(c.frame.compute_secondary_ratio())
-        c.db['window_position'] = str(top), str(left), str(height), str(width)
+        self.outline.db['body_outline_ratio'] = str(c.frame.compute_ratio())
+        self.outline.db['body_secondary_ratio'] = str(c.frame.compute_secondary_ratio())
+        self.outline.db['window_position'] = str(top), str(left), str(height), str(width)
         if 'size' in g.app.debug:
-            g.trace('set window_position:', c.db['window_position'], c.shortFileName())
+            g.trace('set window_position:', self.outline.db['window_position'], c.shortFileName())
 
     # @+node:ekr.20210316085413.2: *6* fc.leojs_vnodes
     def leojs_vnode(
@@ -2003,12 +2046,17 @@ class FileCommands:
         """Put a vestigial <globals> element, and write global data to the cache."""
         c = self.c
         self.put("<globals/>\n")
-        if not c.mFileName:
+        if not self.outline.mFileName:
             return
-        c.db['body_outline_ratio'] = str(c.frame.compute_ratio())
-        c.db['body_secondary_ratio'] = str(c.frame.compute_secondary_ratio())
+        if c is None:
+            # leolib: no window, so nothing new to record. Whatever geometry
+            # the file was read with stays in the cache untouched, so a
+            # headless save does not resize the user's window on next open.
+            return
+        self.outline.db['body_outline_ratio'] = str(c.frame.compute_ratio())
+        self.outline.db['body_secondary_ratio'] = str(c.frame.compute_secondary_ratio())
         w, h, left, t = c.frame.get_window_info()
-        c.db['window_position'] = str(t), str(left), str(h), str(w)
+        self.outline.db['window_position'] = str(t), str(left), str(h), str(w)
 
     # @+node:ekr.20031218072017.3041: *5* fc.putHeader
     def putHeader(self) -> None:
@@ -2059,7 +2107,8 @@ class FileCommands:
         The old way made it almost impossible to delete stylesheet element.
         """
         c = self.c
-        sheet = (c.config.getString('stylesheet') or '').strip()
+        # No settings without a view: leolib writes no stylesheet line.
+        sheet = (c.config.getString('stylesheet') or '').strip() if c else ''
         # sheet2 = c.frame.stylesheet and c.frame.stylesheet.strip() or ''
         # sheet = sheet or sheet2
         if sheet:
@@ -2082,12 +2131,11 @@ class FileCommands:
     # @+node:ekr.20031218072017.1576: *6* fc.putReferencedTElements
     def putReferencedTElements(self) -> None:
         """Put <t> elements for all referenced vnodes."""
-        c = self.c
         if self.usingClipboard:  # write the current tree.
             assert self.currentPosition
             theIter = self.currentPosition.self_and_subtree(copy=False)
         else:  # write everything
-            theIter = c.all_unique_positions(copy=False)
+            theIter = self.outline.all_unique_positions(copy=False)
         # Populate the vnodes dict.
         vnodes = {}
         for p in theIter:
@@ -2208,17 +2256,21 @@ class FileCommands:
     # @+node:ekr.20031218072017.1579: *5* fc.put_v_elements & helper
     def put_v_elements(self, p: Position | None = None) -> None:
         """Puts all <v> elements in the order in which they appear in the outline."""
+        outline = self.outline
         c = self.c
-        c.clearAllVisited()
+        outline.clearAllVisited()
         self.put("<vnodes>\n")
         # Make only one copy for all calls.
-        self.currentPosition = p or c.p
-        self.rootPosition = c.rootPosition()
+        # The selected node is a fact about a window. With no window -- leolib
+        # saving an outline nobody is looking at -- the file records the root,
+        # which is what a fresh outline records anyway.
+        self.currentPosition = p or (c.p if c else outline.rootPosition())
+        self.rootPosition = outline.rootPosition()
         self.vnodesDict = {}
         if self.usingClipboard:
             self.put_v_element(self.currentPosition)  # Write only current tree.
         else:
-            for p in c.rootPosition().self_and_siblings():
+            for p in outline.rootPosition().self_and_siblings():
                 self.put_v_element(p, isIgnore=p.isAtIgnoreNode())
             # #1018: scan *all* nodes.
             self.setCachedBits()
@@ -2231,22 +2283,28 @@ class FileCommands:
         Also cache the current position.
         """
         trace = 'cache' in g.app.debug
-        c = self.c
-        if not c.mFileName:
+        outline = self.outline
+        if not outline.mFileName:
             return  # New.
         assert self.currentPosition
         current = [str(z) for z in self.currentPosition.archivedPosition()]
-        # Expansion is per view (leoOutline.ViewState). c.db is per *document*,
-        # so persist the primary view's folds: which window happened to run the
-        # save must not change what the file remembers.
-        primary = c.outline.views[0] if c.outline.views else c
-        expanded = sorted(primary.view_state.expanded & {v.gnx for v in c.all_unique_nodes()})
-        marked = [v.gnx for v in c.all_unique_nodes() if v.isMarked()]
-        c.db['expanded'] = ','.join(expanded)
-        c.db['marked'] = ','.join(marked)
-        c.db['current_position'] = ','.join(current)
+        gnxs = {v.gnx for v in outline.all_unique_nodes()}
+        # Expansion is per view (leoOutline.ViewState). outline.db is per
+        # *document*, so persist the primary view's folds: which window happened
+        # to run the save must not change what the file remembers. With no view
+        # at all, keep whatever folds the file was read with rather than
+        # claiming everything is collapsed.
+        primary = outline.views[0] if outline.views else None
+        if primary is None:
+            expanded = sorted(set(outline.expanded_gnxs) & gnxs)
+        else:
+            expanded = sorted(primary.view_state.expanded & gnxs)
+        marked = [v.gnx for v in outline.all_unique_nodes() if v.isMarked()]
+        self.outline.db['expanded'] = ','.join(expanded)
+        self.outline.db['marked'] = ','.join(marked)
+        self.outline.db['current_position'] = ','.join(current)
         if trace:
-            g.trace(f"\nset c.db for {c.shortFileName()}")
+            g.trace(f"\nset outline.db for {outline.shortFileName()}")
             print('expanded:', expanded)
             print('marked:', marked)
             print('current_position:', current)

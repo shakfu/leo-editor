@@ -116,11 +116,20 @@ class Outline:
         import leoNodes.py at module level.
         """
         # The views attached to this outline. views[0] is the primary view.
-        self.views: list[Cmdr] = [c]
+        # May be empty: an Outline opened by leolib has no view at all until
+        # a front end attaches one.
+        self.views: list[Cmdr] = [c] if c is not None else []
         self._acting_c: Cmdr | None = None  # See self.acting_view.
         self._batch_depth = 0  # See self.batch_events.
         self._pending: set[str] = set()
         self.structure_dirty = False  # Set by 'structure_changed', read by c.doCommand.
+        # Bumped by the low-level VNode link methods on every structural
+        # change. It used to be c.frame.tree.generation -- the model reaching
+        # into a widget to bump a counter that nothing ever read. Counting
+        # changes to the tree is the document's job; a view that wants to know
+        # whether the outline moved under it can compare this against its own
+        # last-seen value.
+        self.generation = 0
 
         # Model state owned by the document.
         self.hiddenRootNode: VNode = None  # Set by Commands.initObjects.
@@ -134,6 +143,25 @@ class Outline:
         # #4875: In-memory, session-scoped cache of @clean nodes' last-seen file
         # mod times, keyed by gnx. Never serialized.
         self.mod_time_cache: dict[str, float] = {}
+
+        # Reading and writing the .leo file. Owned here, not on a commander:
+        # the gnx index is one per document, never one per window.
+        self._fileCommands: Any = None
+
+        # Stands in for c.db while this outline has no view. leolib opens
+        # outlines with no window and therefore no commander cache.
+        self._viewless_db: dict[str, Any] = {}
+
+        # The window size and pane ratios the .leo file recorded. The reader
+        # used to push these straight into c.frame, which meant reading a file
+        # required a window. It is data now; a front end applies it if it wants
+        # to, and a headless reader ignores it.
+        self.window_geometry: dict[str, Any] = {}
+
+        # The per-view caches the file records, kept here until a view claims
+        # them: an outline opened with no view still has to round-trip them.
+        self.expanded_gnxs: list[str] = []
+        self.marked_gnxs: list[str] = []
 
     # @+node:sa.20260905130000.5: *3* outline.__repr__
     def __repr__(self) -> str:
@@ -347,10 +375,133 @@ class Outline:
     def shortFileName(self) -> str:
         return g.shortFileName(self.mFileName)
 
+    def rootPosition(self) -> Position:
+        """Return a new copy of this outline's root position."""
+        # Imported here, not at module level: leoNodes imports leoGlobals only,
+        # but keeping leoOutline free of an eager leoNodes import preserves the
+        # option of a model package that does not depend on this file.
+        from leo.core.leoNodes import Position
+        children = self.hiddenRootNode.children if self.hiddenRootNode else []
+        v = children[0] if children else None
+        return Position(v=v, childIndex=0, stack=None)
+
+    def all_unique_positions(self, copy: bool = True) -> Any:
+        """Yield the first position of every vnode, in outline order."""
+        p = self.rootPosition()
+        seen = set()
+        while p:
+            if p.v in seen:
+                p.moveToNodeAfterTree()
+            else:
+                seen.add(p.v)
+                yield p.copy() if copy else p
+                p.moveToThreadNext()
+
+    def all_unique_nodes(self) -> Any:
+        """Yield every vnode of this outline."""
+        for p in self.all_unique_positions(copy=False):
+            yield p.v
+
+    def clearAllVisited(self) -> None:
+        """Clear the visited and write bits on every node."""
+        for v in self.all_unique_nodes():
+            v.clearVisited()
+            v.clearWriteBit()
+
+    @property
+    def fileCommands(self) -> Any:
+        """
+        This document's .leo reader/writer, created on demand.
+
+        Owned here rather than on a commander because the gnx index it carries
+        is the document's: two views of one outline must never disagree about
+        which VNode a gnx names.
+        """
+        if self._fileCommands is None:
+            from leo.core import leoFileCommands
+            self._fileCommands = leoFileCommands.FileCommands(self)
+        return self._fileCommands
+
+    @fileCommands.setter
+    def fileCommands(self, fc: Any) -> None:
+        self._fileCommands = fc
+
+    @property
+    def db(self) -> Any:
+        """
+        This document's cache.
+
+        Already per-document in substance -- leoCache keys every entry by
+        c.mFileName, so two views of one outline read and write the same rows --
+        but it was only reachable through a commander, which made "which window
+        ran the save" look like it might matter. It does not, and an outline
+        with no view at all still needs somewhere to put these.
+        """
+        primary = self.views[0] if self.views else None
+        if primary is None:
+            return self._viewless_db
+        return primary.db
+
+    @property
+    def gnx_kind(self) -> str:
+        """
+        How this document allocates gnxs: 'none' (legacy), 'uuid' or 'ksuid'.
+
+        A document-level fact -- every view of an outline must mint gnxs the
+        same way -- so it is answered here rather than read out of a commander's
+        settings by the allocator. Defaults to legacy when there are no
+        settings to consult, which is the case for an outline leolib opened.
+        """
+        config = self.config
+        if config is None:
+            return 'none'
+        return (config.getString('gnx-kind') or 'none').lower()
+
+    @property
+    def leo_file_encoding(self) -> str:
+        """The encoding for this document's .leo file."""
+        config = self.config
+        if config is not None:
+            return config.new_leo_file_encoding
+        return 'UTF-8'  # leolib's default: no settings without a view.
+
     def setHeadString(self, p: Position, s: str) -> None:
         """Set p's headline. Every view follows the head_changed event."""
         p.initHeadString(s)
         p.setDirty()
+
+    def setBodyString(self, p: Position, s: str) -> None:
+        """
+        Set p's body text.
+
+        With a view attached this goes through the commander, which also
+        repaints the widget the user is looking at -- the acting view suppresses
+        its own body_changed event, so nothing else would. With no view at all
+        the model half is the whole job.
+        """
+        if self.c is not None:
+            self.c.setBodyString(p, s)
+            return
+        self.set_body_in_model(p, s)
+
+    def set_body_in_model(self, p: Position, s: str) -> None:
+        """
+        The model half of setBodyString: no widget, no view.
+
+        Called by c.setBodyString after it has updated its own widget, and
+        directly when this outline has no view.
+        """
+        v = p.v
+        if not v:
+            return
+        s = g.toUnicode(s)
+        if v.b == s:
+            return
+        v.setBodyString(s)
+        v.setSelection(0, 0)
+        p.setDirty()
+        if not self.changed:
+            self.setChanged()
 
     # @+node:sa.20260905130000.7: *3* outline: forwarded to the primary view
     # Everything below still lives on the commander. Each one is a call site
@@ -361,9 +512,6 @@ class Outline:
 
     # Model operations that happen to live on Commands (harmless to forward:
     # they read the shared VNode tree and give the same answer for any view).
-
-    def rootPosition(self) -> Position:
-        return self.c.rootPosition()
 
     def createNodeHierarchy(
         self, heads: list, parent: Position = None, forcecreate: bool = False
@@ -382,15 +530,8 @@ class Outline:
         return self.c.atFileCommands
 
     @property
-    def fileCommands(self) -> Any:
-        # Document-level in principle: the gnx index lives here. Still created
-        # per commander, so every view shares the primary view's instance and
-        # there is exactly one gnx authority per outline.
-        return self.c.fileCommands
-
-    @property
     def config(self) -> Any:
-        return self.c.config
+        return self.c.config if self.c else None
 
     @property
     def target_language(self) -> str:
@@ -408,14 +549,14 @@ class Outline:
     def p(self) -> Position:
         return self.c.p
 
-    def setBodyString(self, p: Position, s: str) -> None:
-        self.c.setBodyString(p, s)
-
     def shouldBeExpanded(self, p: Position) -> bool:
         return self.c.shouldBeExpanded(p)
 
-    def setChanged(self, redrawFlag: bool = True) -> None:
-        self.c.setChanged(redrawFlag)
+    def setChanged(self) -> None:
+        if self.c is None:
+            self.changed = True  # No window to mark dirty.
+            return
+        self.c.setChanged()
 
     def alert(self, message: str) -> None:
         self.c.alert(message)

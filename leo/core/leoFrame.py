@@ -888,7 +888,6 @@ class LeoTree:
         # The VNode whose headline onHeadChanged is committing right now, if
         # any. Also LeoTree.widget_owns_headline.
         self._committing_v: VNode | None = None
-        self.generation = 0  # low-level vnode methods increment this count.
         self.redrawCount = 0  # For traces
         self.use_chapters = False  # May be overridden in subclasses.
         # Define these here to keep pylint happy.

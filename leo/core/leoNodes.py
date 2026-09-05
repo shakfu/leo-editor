@@ -109,7 +109,10 @@ class NodeIndices:
             return ''
         c = v.context
         fc = c.fileCommands
-        uuid_kind = (c.config.getString('gnx-kind') or 'none').lower()
+        # Asked of the document, not read out of a commander's settings: every
+        # view of an outline must mint gnxs the same way, and an outline opened
+        # by leolib has no settings to consult.
+        uuid_kind = c.gnx_kind
 
         # Leo will continue to work when gnxs are UUIDs or KSUIDs:
         # 1. The FastAtRead.node_start regex uses `([^:]+):` to find gnxs.
@@ -3031,7 +3034,7 @@ class VNode:
     def _addCopiedLink(self, childIndex: int, parent_v: VNode) -> None:
         """Adjust links after adding a link to v."""
         v = self
-        v.context.frame.tree.generation += 1
+        v.context.generation += 1  # A document counter: see outline.generation.
         parent_v.childrenModified()  # For a plugin.
         # Update parent_v.children & v.parents.
         parent_v.children.insert(childIndex, v)
@@ -3044,7 +3047,7 @@ class VNode:
     def _addLink(self, childIndex: int, parent_v: VNode) -> None:
         """Adjust links after adding a link to v."""
         v = self
-        v.context.frame.tree.generation += 1
+        v.context.generation += 1  # A document counter: see outline.generation.
         parent_v.childrenModified()  # For a plugin.
         # Update parent_v.children & v.parents.
         parent_v.children.insert(childIndex, v)
@@ -3071,7 +3074,7 @@ class VNode:
     def _cutLink(self, childIndex: int, parent_v: VNode) -> None:
         """Adjust links after cutting a link to v."""
         v = self
-        v.context.frame.tree.generation += 1
+        v.context.generation += 1  # A document counter: see outline.generation.
         parent_v.childrenModified()
         assert parent_v.children[childIndex] == v
         del parent_v.children[childIndex]
