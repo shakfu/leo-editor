@@ -223,7 +223,7 @@ class LeoEditPane(QtWidgets.QWidget):
         for hook, handler in self.handlers:
             g.registerHandler(hook, handler)
 
-        signal_manager.connect(self.c, 'body_changed', self._after_body_key)
+        signal_manager.connect(self.c.outline, 'body_changed', self._after_body_key)
 
     # @+node:tbrown.20171028115438.13: *3* _build_layout
     def _build_layout(self, show_head=True, show_control=True, update=True, recurse=False):

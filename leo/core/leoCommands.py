@@ -23,6 +23,7 @@ from leo.core import leoGlobals as g
 # The leoCommands ctor now does most leo.core.leo* imports,
 # thereby breaking circular dependencies.
 from leo.core.leoNodes import Position, VNode
+from leo.core.leoOutline import Outline, ViewState
 
 # @-<< leoCommands imports >>
 # @+<< leoCommands annotations >>
@@ -144,7 +145,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoGui import LeoGui
     from leo.core.qt_frame import LeoQtMenu
     from leo.plugins.qt_gui import StyleSheetManager
-    from leo.plugins.qt_text import QTextMixin
+    from leo.core.leoAPI import QTextMixin
 
     Args = Any
     KWargs = Any
@@ -195,9 +196,23 @@ class Commands:
         parentFrame: Any = None,
         previousSettings: PreviousSettings | None = None,
         relativeFileName: str = '',
+        outline: Outline | None = None,
     ) -> None:
         t1 = time.process_time()
         c = self
+
+        # The document. Passing an existing outline makes this commander a
+        # *second view* of it: the model is shared, this view's position,
+        # hoist stack, chapter and frame are its own.
+        self.owns_outline = outline is None
+        self.outline: Outline = outline or Outline(c, fileName, relativeFileName)
+        # Which nodes are expanded, and where the caret sits in each body, are
+        # facts about *this window*. A new view of an existing outline opens
+        # looking like the view it was opened from.
+        inherit = self.outline.c.view_state if not self.owns_outline else None
+        self.view_state = ViewState(c, inherit_from=inherit)
+        if not self.owns_outline:
+            self.outline.add_view(c)
 
         # Official ivars.
         self._currentPosition = cast(Position, None)
@@ -307,10 +322,8 @@ class Commands:
         self.nodeConflictFileName: str = ''  # The fileName for c.nodeConflictList.
         # Non-persistent dictionary for free use by scripts and plugins.
         self.user_dict: dict[str, Value] = {}
-        # #4875: In-memory, session-scoped cache of @clean nodes' last-seen file
-        # mod times, keyed by gnx. Never serialized: avoids spurious diffs when a
-        # file's mtime moves without its content changing.
-        self.mod_time_cache: dict[str, float] = {}
+        # #4875: the @clean mod-time cache now lives on c.outline: it is
+        # document state, and every view of an outline must share one copy.
 
     # @+node:ekr.20120217070122.10467: *5* c.initEventIvars
     def initEventIvars(self) -> None:
@@ -331,12 +344,14 @@ class Commands:
     # @+node:ekr.20120217070122.10472: *5* c.initFileIvars
     def initFileIvars(self, fileName: str, relativeFileName: str) -> None:
         """Init file-related ivars of the commander."""
-        self.changed = False  # True: the outline has changed since the last save.
         self.ignored_at_file_nodes: list[str] = []  # List of headlines for c.raise_error_dialogs.
         self.last_dir: str = ''  # The last used directory.
-        # Do _not_ use os_path_norm: it converts an empty path to '.' (!!)
-        self.mFileName: str = fileName or ''
-        self.mRelativeFileName = relativeFileName or ''
+        if self.owns_outline:
+            # These live on c.outline. A second view must not reset them.
+            self.changed = False  # True: the outline has changed since the last save.
+            # Do _not_ use os_path_norm: it converts an empty path to '.' (!!)
+            self.mFileName = fileName or ''
+            self.mRelativeFileName = relativeFileName or ''
         # List of orphaned nodes for c.raise_error_dialogs.
         self.orphan_at_file_nodes: list[str] = []
 
@@ -344,9 +359,10 @@ class Commands:
     def initObjects(self, gui: LeoGui) -> None:
         c = self
 
-        # Create the hidden root VNode.
-        self.hiddenRootNode = VNode(context=c, gnx='hidden-root-vnode-gnx')
-        self.hiddenRootNode.h = '<hidden root vnode>'
+        # Create the hidden root VNode. A second view inherits the first's.
+        if c.owns_outline:
+            self.hiddenRootNode = VNode(context=c.outline, gnx='hidden-root-vnode-gnx')
+            self.hiddenRootNode.h = '<hidden root vnode>'
 
         # Create the gui frame.
         title = c.computeTabTitle()
@@ -439,7 +455,7 @@ class Commands:
         self.markupCommands         = leoMarkup.MarkupCommands(c)
         self.persistenceController  = leoPersistence.PersistenceDataController(c)
         self.printingController     = leoPrinting.PrintingController(c)
-        self.undoer                 = leoUndo.Undoer(c)
+        self.undoer                 = leoUndo.Undoer(c) if c.owns_outline else c.outline.undoer
 
         # 15 command handlers...
         self.abbrevCommands     = abbrevCommands.AbbrevCommandsClass(c)
@@ -2148,8 +2164,7 @@ class Commands:
         Not really all, just all for each of v's distinct immediate parents.
         """
         c = self
-        context = v.context  # v's commander.
-        assert c == context
+        assert v.context is c.outline, (v.context, c.outline)
         positions = []
         for immediate in v.parents:
             if v in immediate.children:
@@ -2177,8 +2192,7 @@ class Commands:
         Given a VNode v, construct a valid position p such that p.v = v.
         """
         c = self
-        context = v.context  # v's commander.
-        assert c == context
+        assert v.context is c.outline, (v.context, c.outline)
         stack: list[tuple[VNode, int]] = []
         while v.parents:
             parent = v.parents[0]
@@ -2210,6 +2224,55 @@ class Commands:
         __set_p,
         doc="commander current position property",
     )
+
+    # @+node:sa.20260905130100.1: *4* c: properties forwarded to c.outline
+    # These name *document* state, which now lives on c.outline so that several
+    # views can share it. The properties keep the historical `c.x` spelling
+    # working for core, plugins and scripts. See LEO_REFACTOR.md, stage 3.
+
+    @property
+    def hiddenRootNode(self) -> VNode:
+        return self.outline.hiddenRootNode
+
+    @hiddenRootNode.setter
+    def hiddenRootNode(self, v: VNode) -> None:
+        self.outline.hiddenRootNode = v
+
+    @property
+    def mFileName(self) -> str:
+        return self.outline.mFileName
+
+    @mFileName.setter
+    def mFileName(self, s: str) -> None:
+        self.outline.mFileName = s
+
+    @property
+    def mRelativeFileName(self) -> str:
+        return self.outline.mRelativeFileName
+
+    @mRelativeFileName.setter
+    def mRelativeFileName(self, s: str) -> None:
+        self.outline.mRelativeFileName = s
+
+    @property
+    def changed(self) -> bool:
+        return self.outline.changed
+
+    @changed.setter
+    def changed(self, val: bool) -> None:
+        self.outline.changed = val
+
+    @property
+    def mod_time_cache(self) -> dict[str, float]:
+        return self.outline.mod_time_cache
+
+    @property
+    def undoer(self) -> Any:
+        return self.outline.undoer
+
+    @undoer.setter
+    def undoer(self, u: Any) -> None:
+        self.outline.undoer = u
 
     # @+node:ekr.20060906211747.1: *4* c.Setters
     # @+node:ekr.20040315032503: *5* c.appendStringToBody
@@ -3293,7 +3356,11 @@ class Commands:
             try:
                 c.inCommand = True
                 try:
-                    return_value = command_func(event)
+                    # Name the acting view for the duration of the command:
+                    # several views may share this outline, and the model
+                    # cannot know which window the user is working in.
+                    with c.outline.acting_view(c):
+                        return_value = command_func(event)
                 except Exception:
                     g.es_exception()
                     return_value = None

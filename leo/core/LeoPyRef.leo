@@ -130,6 +130,7 @@
 <v t="ekr.20241022090855.1"><vh>@file leoJupytext.py</vh></v>
 <v t="ekr.20190515070742.1"><vh>@file leoMarkup.py</vh></v>
 <v t="ekr.20031218072017.3320"><vh>@file leoNodes.py</vh></v>
+<v t="sa.20260905130000.1"><vh>@file leoOutline.py</vh></v>
 <v t="ekr.20140821055201.18331"><vh>@file leoPersistence.py</vh></v>
 <v t="ekr.20031218072017.3439"><vh>@file leoPlugins.py</vh></v>
 <v t="ekr.20150419124739.1"><vh>@file leoPrinting.py</vh></v>
@@ -577,6 +578,7 @@
 <v t="ekr.20220822082042.1"><vh>@file ../unittests/core/test_leoImport.py</vh></v>
 <v t="ekr.20210903155556.1"><vh>@file ../unittests/core/test_leoKeys.py</vh></v>
 <v t="ekr.20201203042030.1"><vh>@file ../unittests/core/test_leoNodes.py</vh></v>
+<v t="sa.20260905150000.1"><vh>@file ../unittests/core/test_leoOutline.py</vh></v>
 <v t="ekr.20210908171733.1"><vh>@file ../unittests/core/test_leoPersistence.py</vh></v>
 <v t="ekr.20220911163718.1"><vh>@file ../unittests/core/test_leoQt6.py</vh></v>
 <v t="ekr.20210902055206.1"><vh>@file ../unittests/core/test_leoRst.py</vh></v>
@@ -3173,6 +3175,24 @@ jobs:
       - run: sudo apt-get update &amp;&amp; sudo apt-get install -y --no-install-recommends
           libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1
       - run: pip install asttokens Pygments "PyQt6&gt;=6.6" PyQt6-QScintilla
+      - run: python run_ci_unit_tests.py
+
+  test-no-qt:
+    # Leo's core must import and pass its unit tests with no Qt installed.
+    # Nothing here installs PyQt6 or any Qt system library: that is the point.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install asttokens Pygments
+      - run: python -c "from leo.core import leoApp, leoBridge, leoGui"
       - run: python run_ci_unit_tests.py
 
   leo-sync:

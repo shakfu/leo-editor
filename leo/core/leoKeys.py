@@ -18,7 +18,6 @@ from typing import Any, cast, TYPE_CHECKING
 from leo.core import leoGlobals as g
 from leo.external import codewise
 from leo.core.leoFrame import NullLog
-from leo.core.leoQt import QtWidgets
 
 try:
     import jedi
@@ -33,7 +32,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoGui import LeoKeyEvent
     from leo.core.leoNodes import Position
     from leo.plugins.qt_frame import LeoQtLog
-    from leo.plugins.qt_text import QTextMixin
+    from leo.core.leoAPI import QTextMixin
+    from leo.core.leoQt import QtWidgets
 
     QWidget = QtWidgets.QWidget
     Stroke = Any

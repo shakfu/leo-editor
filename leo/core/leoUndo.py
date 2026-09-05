@@ -48,6 +48,7 @@
 # @+node:ekr.20220821074023.1: ** << leoUndo imports & annotations >>
 from __future__ import annotations
 from collections.abc import Callable
+import weakref
 from typing import TYPE_CHECKING
 from leo.core import leoGlobals as g
 from leo.core.leoFileCommands import FastRead
@@ -56,7 +57,7 @@ from leo.core.leoNodes import Position, VNode
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
     from leo.core.leoGui import LeoKeyEvent
-    from leo.plugins.qt_text import QTextMixin
+    from leo.core.leoAPI import QTextMixin
 
 
 # @-<< leoUndo imports & annotations >>
@@ -76,7 +77,10 @@ class Undoer:
     # @+node:ekr.20150509193307.1: *3* u.Birth
     # @+node:ekr.20031218072017.3606: *4* u.__init__
     def __init__(self, c: Cmdr) -> None:
-        self.c = c
+        # The undo stack belongs to the *document*: one outline, one history.
+        # Several views may share it, so the Undoer must not pin one commander.
+        self.outline = c.outline
+        self.interleaved_groups = 0  # Counted by u.check_group_origin.
         self.p: Position | None = None  # The position/node being operated upon for undo and redo.
         self.granularity = None  # Set in reloadSettings.
         self.max_undo_stack_size = c.config.getInt('max-undo-stack-size') or 0
@@ -142,6 +146,48 @@ class Undoer:
         self.sortChildren = None
         self.verboseUndoGroup = None
         self.reloadSettings()
+
+    # @+node:sa.20260905160000.1: *4* u.c property & acting_view
+    @property
+    def c(self) -> Cmdr:
+        """
+        The view this undoer is acting for: see Outline.acting_view.
+
+        Undo restores the caret and scroll position of the window whose command
+        is running, not of whichever view happened to create the Undoer.
+        """
+        return self.outline.c
+
+    def view_ref(self) -> Callable:
+        """A weak reference to the acting view, or None."""
+        c = self.c
+        return weakref.ref(c) if c else None
+
+    def check_group_origin(self, group_bunch: g.Bunch) -> None:
+        """
+        Warn when a view's change lands inside a group another view opened.
+
+        The undo stack is shared by every view of an outline, so an edit made in
+        window B while window A has an undo group open would be swallowed into
+        A's group and undone with it. Impossible with a single view; loud when
+        it happens.
+        """
+        u = self
+        owner = group_bunch.origin() if getattr(group_bunch, 'origin', None) else None
+        if owner is None or owner is u.c:
+            return
+        u.interleaved_groups += 1
+        message = (
+            f"undo group opened by {owner.shortFileName()!r} is swallowing a change "
+            f"from another view of the same outline"
+        )
+        if g.unitTesting:
+            raise AssertionError(message)
+        g.print_unique_message(f"Undoer: {message}")
+
+    def acting_view(self, c: Cmdr) -> Callable:
+        """Deprecated: use c.outline.acting_view(c)."""
+        return self.outline.acting_view(c)
 
     # @+node:ekr.20191213085126.1: *4* u.reloadSettings
     def reloadSettings(self) -> None:
@@ -221,9 +267,11 @@ class Undoer:
     # @+node:ekr.20060127113243: *4* u.pushBead
     def pushBead(self, bunch: g.Bunch) -> None:
         u = self
+        bunch.origin = u.view_ref()  # The view that made this change.
         # New in 4.4b2:  Add this to the group if it is being accumulated.
         bunch2 = u.bead >= 0 and u.bead < len(u.beads) and u.beads[u.bead]
         if bunch2 and hasattr(bunch2, 'kind') and bunch2.kind == 'beforeGroup':
+            u.check_group_origin(bunch2)
             # Just append the new bunch the group's items.
             bunch2.items.append(bunch)
         else:
@@ -762,6 +810,7 @@ class Undoer:
                 print('p:', p)
                 print('c.p', c.p)
         bunch = u.createCommonBunch(p)
+        bunch.origin = u.view_ref()  # The view that opened the group.
         # Set types.
         bunch.kind = 'beforeGroup'
         bunch.undoType = command
@@ -1418,6 +1467,9 @@ class Undoer:
 
         # Finish.
         c.checkOutline()
+        # One outline, one undo history: a change replayed here may have deleted
+        # the node another view is sitting on.
+        u.outline.revalidate_views(acting_c=c)
         u.update_status()
         u.redoing = False
         u.bead += 1
@@ -1816,6 +1868,9 @@ class Undoer:
 
         # Finish.
         c.checkOutline()
+        # One outline, one undo history: a change replayed here may have deleted
+        # the node another view is sitting on.
+        u.outline.revalidate_views(acting_c=c)
         u.update_status()
         u.undoing = False
         u.bead -= 1

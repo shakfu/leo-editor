@@ -47,11 +47,11 @@ if TYPE_CHECKING:  # pragma: no cover
         QtIconBarClass,
         QtStatusLineClass,
     )
+    from leo.core.leoAPI import QTextMixin
     from leo.plugins.qt_text import (
         QMinibufferWrapper,
         QScintillaWrapper,
         QTextEditWrapper,
-        QTextMixin,
     )
 
     Widget = Any  # 'Any' is the correct annotation for base class widgets.
@@ -282,6 +282,13 @@ class LeoFrame:
     # @+node:ekr.20051009045404: *4* frame.createFirstTreeNode
     def createFirstTreeNode(self) -> VNode:
         c = self.c
+
+        if not c.owns_outline:
+            # A second view of an existing outline. Every frame's ctor calls
+            # this, but the document already has a tree: wiping it here would
+            # destroy the outline the other views are showing.
+            children = c.hiddenRootNode.children
+            return children[0] if children else None
 
         # #1631: Initialize here, not in p._linkAsRoot.
         c.hiddenRootNode.children = []
@@ -925,9 +932,11 @@ class LeoTree:
         c = self.c
         if not c.frame.body.wrapper:
             return  # Defensive.
-        if p.v.context != c:
-            # Selecting a foreign position will not be pretty.
-            g.trace(f"Wrong context: {p.v.context!r} != {c!r}")
+        if p.v.context is not c.outline:
+            # Selecting a position from another *document* will not be pretty.
+            # A position from another view of *this* outline is fine: that is
+            # the whole point of several commanders sharing one Outline.
+            g.trace(f"Wrong outline: {p.v.context!r} != {c.outline!r}")
             g.trace(g.callers())
             return
         old_p = c.p

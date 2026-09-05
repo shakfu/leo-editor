@@ -19,7 +19,6 @@ import platform
 from leo.core import leoGlobals as g
 from leo.core import leoExternalFiles
 from leo.core.leoCache import GlobalCacher
-from leo.core.leoQt import QCloseEvent
 
 # For casts
 from leo.core.leoBackground import BackgroundProcessManager
@@ -28,14 +27,14 @@ from leo.core.leoExternalFiles import ExternalFilesController
 from leo.core.leoNodes import NodeIndices, Position
 from leo.core.leoPlugins import LeoPluginsController
 from leo.core.leoSessions import SessionManager
-from leo.plugins.qt_events import LossageData
-from leo.plugins.qt_idle_time import IdleTime
 
 # @-<< leoApp imports >>
 # @+<< leoApp annotations >>
 # @+node:ekr.20220819191617.1: ** << leoApp annotations >>
 if TYPE_CHECKING:  # pragma: no cover
     from subprocess import Popen
+    from leo.plugins.qt_events import LossageData
+    from leo.plugins.qt_idle_time import IdleTime
     from types import ModuleType
 
     # Do not import these at the top level: they would cause circular imports.
@@ -1347,9 +1346,12 @@ class LeoApp:
         if c.promptingForClose:
             # There is already a dialog open asking what to do.
             return False
+        # Closing one of several views of an outline closes only that view:
+        # the document stays open elsewhere, so do not prompt to save it.
+        last_view = len(c.outline.views) <= 1
         # Make sure .leoRecentFiles.txt is written.
         g.app.recentFilesManager.writeRecentFilesFile(c)
-        if c.changed:
+        if c.changed and last_view:
             c.promptingForClose = True
             veto = frame.promptForSave()
             c.promptingForClose = False
@@ -1365,6 +1367,7 @@ class LeoApp:
         else:
             # #69.
             g.app.forgetOpenFile(fn=c.fileName())
+        c.outline.remove_view(c)  # This view is gone; the outline may not be.
         if g.app.windowList:
             c2 = new_c or g.app.windowList[0].c
             g.app.selectLeoWindow(c2)
@@ -1454,6 +1457,9 @@ class LeoApp:
             g.trace()
 
         # #2433 - use the same method as clicking on the close box.
+        # Import Qt lazily: leoApp.py must stay importable without Qt.
+        from leo.core.leoQt import QCloseEvent
+
         g.app.gui.close_event(QCloseEvent())
 
     # @+node:ekr.20230703100758.1: *4* app.saveSession
@@ -1599,8 +1605,14 @@ class LeoApp:
         parentFrame: Any = None,
         previousSettings: PreviousSettings | None = None,
         relativeFileName: str = '',
+        outline: Any = None,
     ) -> Cmdr:
-        """Create a commander and its view frame for the Leo main window."""
+        """
+        Create a commander and its view frame for the Leo main window.
+
+        Pass an existing Outline to make the new commander a *second view* of
+        that document rather than a new document.
+        """
         # Create the commander and its subcommanders.
         # This takes about 3/4 sec when called by the leoBridge module.
         # Timeit reports 0.0175 sec when using a nullGui.
@@ -1612,6 +1624,7 @@ class LeoApp:
             parentFrame=parentFrame,
             previousSettings=previousSettings,
             relativeFileName=relativeFileName,
+            outline=outline,
         )
         return c
 

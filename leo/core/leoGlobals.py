@@ -7968,7 +7968,7 @@ def handleScriptException(
 
     # Careful: this test is no longer guaranteed.
     assert p.v
-    if p.v.context != c:
+    if p.v.context is not c.outline:
         return
     fileName, n = g.getLastTracebackFileAndLineNumber()
     try:
@@ -8473,8 +8473,9 @@ def handleUnl(unl_s: str, c: Cmdr) -> Cmdr | None:
         return None
     # Do not assume that p is in c.
     assert p.v
-    c2 = p.v.context
-    if c2 != c:
+    # p may belong to another outline. Drive one of *its* views.
+    c2 = c if p.v.context is c.outline else p.v.context.c
+    if c2 is not c:
         g.app.selectLeoWindow(c2)  # Switch outlines.
     c2.redraw(p)
 

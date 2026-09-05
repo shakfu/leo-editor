@@ -295,6 +295,54 @@ def import_txt_file(self: Self, fn: str) -> None:
     c.redraw(p)
 
 
+# @+node:sa.20260905140000.1: *3* c_file.openSecondView
+@g.commander_command('open-second-view')
+def openSecondView(self: Self, event: LeoKeyEvent | None = None) -> Cmdr:
+    """
+    Open a second view of this outline.
+
+    The new window shares this outline's nodes and dirty flag, but has its own
+    current position, hoist stack, chapter and panes. Editing a node in either
+    window changes the one document.
+    """
+    from leo.core import leoApp
+
+    lm = g.app.loadManager
+    old_c = self
+    old_c.outerUpdate()  # Clear the update queue before making a window.
+    g.app.setLog(None)
+    g.app.lockLog()
+
+    # Retain all previous settings. Very important for theme code.
+    previousSettings = leoApp.PreviousSettings(
+        settingsDict=lm.globalSettingsDict,
+        shortcutsDict=lm.globalBindingsDict,
+    )
+    c = g.app.newCommander(
+        fileName=old_c.fileName(),
+        gui=old_c.gui,
+        previousSettings=previousSettings,
+        relativeFileName=old_c.mRelativeFileName,
+        outline=old_c.outline,  # The whole point: share the document.
+    )
+    frame = c.frame
+    frame.setInitialWindowGeometry()
+    frame.deiconify()
+    frame.lift()
+    frame.resizePanesToRatio(frame.compute_ratio(), frame.compute_secondary_ratio())
+
+    # Do *not* call frame.createFirstTreeNode: the outline already has a tree.
+    # Do *not* call c.clearChanged: the dirty flag belongs to the document.
+    lm.finishOpen(c)
+    g.doHook("new", old_c=old_c, c=c, new_c=c)
+    c.k.makeAllBindings()
+
+    # Start the new view where the old one is looking.
+    p = old_c.p
+    c.redraw(p if c.positionExists(p) else c.rootPosition())
+    return c
+
+
 # @+node:ekr.20031218072017.1623: *3* c_file.new
 @g.commander_command('file-new')
 @g.commander_command('new')

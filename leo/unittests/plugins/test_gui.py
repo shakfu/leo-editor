@@ -9,20 +9,22 @@ import textwrap
 from leo.core import leoGlobals as g
 from leo.core.leoTest2 import LeoUnitTest, create_app
 
+from leo.core.leoAPI import StringTextWrapper
+from leo.core.leoFrame import (
+    NullBody,
+    NullFrame,
+    NullIconBarClass,
+    NullLog,
+    NullStatusLineClass,
+    NullTree,
+)
+from leo.core.leoGui import LeoKeyEvent
+
+# Qt is optional: TestQtGui.setUp skips every Qt test when Qt is missing.
 try:
     from leo.core.leoQt import Qt, QtCore, QtGui
-    from leo.core.leoAPI import StringTextWrapper
-    from leo.core.leoFrame import (
-        NullBody,
-        NullFrame,
-        NullIconBarClass,
-        NullLog,
-        NullStatusLineClass,
-        NullTree,
-    )
-    from leo.core.leoGui import LeoKeyEvent
-except Exception:
-    g.es_exception()
+except ImportError:
+    Qt = QtCore = QtGui = None
 # @-<< test_gui imports >>
 
 

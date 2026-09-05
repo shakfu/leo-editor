@@ -13,7 +13,6 @@ import re
 import textwrap
 import typing
 from typing import Any, cast, TYPE_CHECKING
-from leo.plugins.mod_scripting import build_rclick_tree
 from leo.core import leoGlobals as g
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -184,6 +183,10 @@ class ParserBaseClass:
                         useSentinels=True,
                     )
                     # #2011: put rclicks in aList. Do not inject into command_p.
+                    # Import the plugin lazily, as leoFrame.py does: leoConfig.py
+                    # is core and must not depend on a plugin at import time.
+                    from leo.plugins.mod_scripting import build_rclick_tree
+
                     command_p = p.copy()
                     rclicks = build_rclick_tree(command_p, top_level=True)
                     aList.append((command_p, script, rclicks))

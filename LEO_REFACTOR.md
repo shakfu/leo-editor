@@ -36,6 +36,200 @@ upstreamable on their own merits.
 
 ---
 
+## Status
+
+Branch `decouple-model-gui`. Stages 0, 1, 3, 4 and 5 are **done**; stage 2's bug fix is
+done and the rest of stage 2 is not started.
+
+| Stage | Status |
+|---|---|
+| 0 — Safety net | **done** — 891 tests, run headless, with and without Qt |
+| 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
+| 2 — Model notifications | **partly done** — the branch bug is fixed and tested; the wider event set, batching and the freewin conversion remain |
+| 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
+| 4 — Unify the undo stack on the `Outline` | **done** — one history, acting-view semantics, position clamping |
+| 5 — Move per-view state off the `VNode` | **done** — independent folds, caret and scroll per view |
+| 6-7 | not started |
+
+**Two Qt windows on one outline now work**, with coherent undo and independent folds.
+That was the milestone this plan set as the point to judge the rest by, and stages 4 and
+5 have since closed two of its three caveats.
+
+Verified on this branch, on a machine with **no PyQt6 and no pip**:
+
+```
+$ PYTHONPATH=. python3 run_ci_unit_tests.py
+run_ci_unit_tests.py: 891 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+
+$ ruff check leo && ruff format --check leo
+All checks passed!  /  546 files already formatted
+
+$ PYTHONPATH=. python3 -m leo.scripts.check_leo_sync
+LeoPyRef.leo is in sync with all mirrored files.
+```
+
+The same suite passes unchanged with Qt present (15 skips instead of 23), so nothing was
+traded away to get here. Headless commander startup dropped from 0.22s to 0.04s, because
+importing Leo no longer imports Qt.
+
+### What changed
+
+**Stage 1 — no Qt at import time** (26 files, +362/-269):
+
+- `QTextMixin` moved from `leo/plugins/qt_text.py` to `leo/core/leoAPI.py`. It was already
+  Qt-free apart from `setFocus`, which now imports Qt lazily — it only ever runs when a
+  real widget exists. Its 13 importers across core, commands, plugins and tests were
+  repointed; `qt_text.py` re-imports it from core, so nothing else moved.
+- `leoApp`, `leoGui`, `leoKeys`, `leoFind`, `leoConfig` now import Qt and `leo.plugins.*`
+  either under `TYPE_CHECKING` or lazily at the point of use. `leoConfig`'s
+  `build_rclick_tree` import follows the lazy pattern `leoFrame.py:1413` already used.
+- `leoBackground` guards its `QtCore` import; its `if QtCore:` test already anticipated
+  Qt being absent.
+- `leoColorizer` said "Qt imports. May fail from the bridge" and set everything to `None`
+  on failure, but four places then used those names unguarded — `isinstance(widget,
+  QtWidgets.QTextEdit)` (×3), colour validation, `setTag`, and the pygments format
+  bindings. Latent bugs on a path the module already claimed to support; now fixed, and
+  the jEdit and pygments colorizer tests run headless for the first time.
+- `test_gui.py`'s single try/except around all its imports meant a missing Qt left
+  `NullFrame` and friends undefined, breaking the *null*-gui tests. Split so only the Qt
+  import is guarded; `TestQtGui.setUp` already skipped itself when `Qt` was falsy.
+- New CI job `test-no-qt`: installs no PyQt6 and no Qt system libraries, imports
+  `leoApp`/`leoBridge`/`leoGui`, runs the suite.
+
+**Stage 2 — the notification bug** (finding 6):
+
+- `v.setBodyString` and `v.setHeadString` now emit and call `contentModified()` on both
+  branches. `setHeadString` also gained a `head_changed` signal, which the event set in
+  stage 2 needs anyway.
+- `v.contentModified()` records into `g.contentModifiedSet` only when a plugin is
+  listening. That set is drained by `c.outerUpdate`, which never runs in leoBridge or
+  leoserver scripts — without the guard, correctly firing it would pin every modified
+  VNode for the life of the process. A leak the bug had been hiding.
+- New test `test_set_body_and_head_string_notify`, confirmed to fail before the fix.
+- Measured on an 11,242-node load of `LeoPyRef.leo`: 0.242s before, 0.242s after. The
+  batching planned for stage 2 is not needed for this part.
+
+**Stage 3 — the `Outline`** (new `leo/core/leoOutline.py`, 9 new tests):
+
+- `Outline` owns what belongs to the *document*: the hidden root VNode, the file name,
+  the dirty flag, the `@clean` mod-time cache, and the list of attached views.
+  `Commands` keeps `p`, `hoistStack`, `chapterController`, `frame`, `k` — the view.
+- **`VNode.context` is now an Outline, never a commander.** `VNode.__init__` normalizes a
+  commander argument to `commander.outline`, so all 25 construction sites still read
+  `VNode(context=c)`. `c.hiddenRootNode`, `c.mFileName`, `c.changed` and friends became
+  forwarding properties, so the ~37 `c.hiddenRootNode` call sites did not move.
+- The context comparisons that made a second view impossible now compare *documents*:
+  `LeoTree.selectHelper` (`leoFrame.py`), `g.handleUrl`, `g.findUnl`, the two
+  `vnode2allPositions` asserts, and `editFileCommands`.
+- `frame.createFirstTreeNode` wipes `hiddenRootNode.children` and the gnx dict, and
+  *every* frame constructor calls it — so building a second view destroyed the outline
+  the first one was showing. It now returns early for a view that does not own its
+  outline. This was the only surprise of the stage.
+- `app.closeLeoWindow` detaches the view and prompts to save only when closing the
+  outline's last view. `Outline.c` follows `views[0]`, so closing the original window
+  leaves the remaining view primary.
+- The event bus moved from the commander to the outline, which is where stage 2 wanted
+  it. `editpane` and the stage 2 test now subscribe to `c.outline`.
+- New command **`open-second-view`**: builds a commander against the current outline,
+  skips `createFirstTreeNode` and `clearChanged`, and opens on the first view's position.
+- `leoOutline.py` and `test_leoOutline.py` were added to `LeoPyRef.leo` (361 mirrored
+  nodes now, still in sync).
+
+What the tests pin down: `v.context` is the outline for every node; document state is
+shared and view state is not; a second view keeps the tree and its gnxs; positions and
+hoist stacks are independent; an edit in either view is visible in the other; the bus is
+document-level; selecting a sibling view's position is allowed.
+
+**Stage 4 — one undo history per outline** (6 new tests):
+
+- `Outline.undoer`, created by the outline's first view; `c.undoer` forwards. A second
+  view no longer gets a second stack.
+- **`Undoer.c` became a property: the view whose command is running.** `c.doCommand`
+  sets it for the duration of every command, and it falls back to the outline's primary
+  view. This one change makes all 35 `c.frame.*` drives inside `leoUndo.py` target the
+  window the user is actually looking at, rather than whichever view happened to
+  construct the Undoer.
+- `Outline.revalidate_views()` runs after every undo and redo. Any view whose current
+  position no longer exists falls back to the nearest surviving ancestor, else the root;
+  views that did not act are asked to redraw, since nothing else would prompt them.
+  Before this, undoing an insert in one window left the other holding a Position into a
+  deleted subtree — reproduced, then fixed, then pinned by a test that fails when the
+  call is removed.
+- Every bunch records a weak reference to the view that made it. `pushBead` uses it to
+  detect a change from one view landing inside an undo group another view opened: it
+  raises in unit tests and prints once otherwise. Impossible with a single view, so this
+  costs existing behaviour nothing.
+
+**Stage 5 — per-view state off the `VNode`** (6 new tests):
+
+- New `ViewState` in `leoOutline.py`, one per commander, keyed by gnx: which nodes are
+  expanded, plus each node's remembered caret, scroll position and selection.
+- `expandedPositions`, `insertSpot`, `scrollBarSpot`, `selectionStart` and
+  `selectionLength` left `VNode.__slots__` and became **properties** that read and write
+  the acting view's `ViewState`. The ~30 sites that assign them (`v.insertSpot = i`) did
+  not change. `v.expand()`, `v.contract()` and `v.isExpanded()` route the same way, so
+  the 385 `expand`/`contract`/`isExpanded` call sites did not change either.
+- The **acting view** mechanism introduced for undo in stage 4 was lifted from the
+  Undoer onto the `Outline`, where both stages now share it: `c.doCommand` names the
+  view whose command is running, and `Outline.c` resolves to it. That is what lets
+  `p.expand()` — which has no commander argument and 385 callers — change the folds of
+  the right window without a signature change anywhere.
+- **`selectedBit` is gone.** "Is this node current" has no single answer once an outline
+  has several views, so `v.isSelected()` is now derived from the acting view's position
+  and `v.setSelected()` is a documented no-op.
+- A new view **inherits the folds** of the view it was opened from. Opening a second
+  window onto a fully collapsed tree would be the bigger surprise.
+- `c.db` persistence is unchanged in format and still per document, but
+  `fc.setCachedBits` now deliberately saves the **primary** view's folds: which window
+  happened to run the save must not change what the file remembers. The full
+  save/reload round trip was checked against a real `.leo` file.
+- One regression I introduced and then fixed: `expanded_positions` holds Positions, and
+  a Position holds VNodes. On the VNode that state died with the node; in a `ViewState`
+  it does not, so a deleted subtree would be pinned in memory. `ViewState.prune()` runs
+  on every structural change. It sweeps only that dict — 13 entries for a freshly opened
+  `LeoPyRef.leo` — rather than walking the outline, which measures ~9ms at 11k nodes.
+  File-load time is unchanged at 0.25s.
+
+### What is *not* fixed yet
+
+Opening a second view today has one known gap left, by design:
+
+- **Body sync only on selection change** (stage 6). Text typed in view A reaches view B
+  when B next selects that node, not keystroke by keystroke.
+
+`Outline` currently forwards 25 attributes and methods to its acting view. That list is
+deliberately explicit rather than a `__getattr__`, because it *is* the remaining
+coupling: `grep 'self.c' leo/core/leoOutline.py` is the to-do list for stage 6, and it
+should only ever get shorter.
+
+### Deviations from the plan below
+
+Four, all deliberate:
+
+1. **Undo restores the caret into the *acting* view, not the originating one.** The
+   stage 4 text below says the view hint should go back to the view that made the
+   change. Implementing it showed that is the wrong call: if you edit in window A,
+   switch to window B and press Ctrl-Z, moving A's caret while B shows nothing is
+   confusing. The user is looking at B. Every bunch still records its origin — it is
+   what detects interleaved groups — but the caret follows the acting view.
+2. **The ~20 `c.frame.body.wrapper` drives inside `leoUndo.py` are still there.** Stage 4
+   planned to convert them to model writes plus a hint. Making `Undoer.c` the acting view
+   reaches the same goal — undo is view-neutral — without touching them, and converting
+   them now would buy nothing until stage 6 makes the model authoritative for body text.
+   Deferred to stage 6, where they belong.
+3. **`leoQt.py` still raises when PyQt6 is missing** rather than degrading to `None`, as
+   the stage 1 text proposed. Degrading would make `from leo.core.leoQt import QtWidgets`
+   succeed with `None` everywhere and fail later, somewhere less obvious. Core modules
+   handle absence explicitly instead; the `qt_*` plugins still fail loudly and early,
+   which is correct — they cannot work without Qt.
+4. **`pyproject.toml` is unchanged.** Splitting `PyQt6` into a `[gui]` extra changes what
+   `pip install` gives every user, including anyone installing the desktop app, and that
+   is a packaging decision for the fork's owner rather than a consequence of this
+   refactor. The capability is proved by the `test-no-qt` CI job instead. The split is a
+   one-line change whenever you want it.
+
+---
+
 ## How I explored
 
 Static reading, plus three executable probes. The probes matter because they turn
@@ -104,6 +298,9 @@ over 25 years, not a monolith that never tried.
 ---
 
 ## Findings
+
+*These record the tree as found at `2844177134`. Findings 1 and 6 have since been
+fixed on this branch — see **Status** above; the rest still stand.*
 
 ### 1. The abstraction layer imports the implementation it abstracts
 
@@ -397,21 +594,21 @@ What follows from the decision:
 Ordered so every stage is independently valuable, independently revertable, and leaves
 the tests green. Effort figures are rough calibration, not estimates.
 
-| Stage | What | Effort | Risk | Gives you |
-|---|---|---|---|---|
-| 0 | Headless CI safety net | small | none | permission to touch anything |
-| 1 | Break the import-time Qt dependency | small | low | `import leo` with no Qt; upstreamable |
-| 2 | Fix and complete model notifications | small-med | low | a live event bus; upstreamable bug fix |
-| 3 | Extract `Outline` from `Commands` | medium | medium | **two views on one outline** |
-| 4 | Unify the undo stack on the `Outline` | medium | medium | coherent undo across views |
-| 5 | Move per-view state off the `VNode` | medium | medium | independent expansion/scroll per view |
-| 6 | Make the model authoritative for body text | large | medium | live sync of an actively-edited body |
-| 7 | Per-view GUI, retire `g.app.gui` | large | high | heterogeneous views in one process |
+| Stage | What | Effort | Risk | Gives you | Status |
+|---|---|---|---|---|---|
+| 0 | Headless CI safety net | small | none | permission to touch anything | **done** |
+| 1 | Break the import-time Qt dependency | small | low | `import leo` with no Qt; upstreamable | **done** |
+| 2 | Fix and complete model notifications | small-med | low | a live event bus; upstreamable bug fix | bug fixed |
+| 3 | Extract `Outline` from `Commands` | medium | medium | **two views on one outline** | **done** |
+| 4 | Unify the undo stack on the `Outline` | medium | medium | coherent undo across views | **done** |
+| 5 | Move per-view state off the `VNode` | medium | medium | independent expansion/scroll per view | **done** |
+| 6 | Make the model authoritative for body text | large | medium | live sync of an actively-edited body | next |
+| 7 | Per-view GUI, retire `g.app.gui` | large | high | heterogeneous views in one process | optional |
 
 Stages 1-5 are the project. Stage 6 is the long tail. Stage 7 is optional and probably
 unnecessary — see below.
 
-### Stage 0 — Safety net (prerequisite)
+### Stage 0 — Safety net (prerequisite) — done
 
 Get the existing 41 test files running in CI in this fork before touching anything.
 `run_pytest_tests.py` and `run_ci_unit_tests.py` are present. Add a headless job.
@@ -421,7 +618,7 @@ Also capture a **baseline load-time profile** — open a large `.leo` file and r
 time — because stages 2 and 6 both add per-mutation work on the file-reading hot path
 and you will want to know what it cost.
 
-### Stage 1 — Break the import-time Qt dependency
+### Stage 1 — Break the import-time Qt dependency — done
 *Effort: small. Risk: low. Value: immediate and standalone.*
 
 Goal: `import leo.core.leoApp` works with no Qt installed, and the null-GUI test suite
@@ -452,7 +649,7 @@ headless path actually *calls* Qt, so the imports are removable rather than repl
 **Ship this one on its own.** It is plausibly upstreamable as a standalone packaging
 improvement, independent of everything that follows.
 
-### Stage 2 — Fix and complete model notifications
+### Stage 2 — Fix and complete model notifications — bug fix done
 *Effort: small-medium. Risk: low. Value: unblocks everything downstream.*
 
 - **Fix the branch bug** in `VNode.setBodyString` / `setHeadString` so `str` assignments
@@ -484,7 +681,7 @@ improvement, independent of everything that follows.
 Interim wiring: emit on `v.context` (the commander) and have views subscribe there.
 Stage 3 moves the bus to the `Outline` without changing the subscriber API.
 
-### Stage 3 — Extract `Outline` from `Commands`
+### Stage 3 — Extract `Outline` from `Commands` — done
 *Effort: medium. Risk: medium. Value: the conceptual fix.*
 
 Introduce an `Outline` (document) object owning `hiddenRootNode`, the gnx index, the
@@ -509,7 +706,7 @@ Deliverable at the end of this stage: **two Qt windows on one outline, both usab
 edits visible in both.** Crude — shared expansion state, body sync only on selection
 change — but real.
 
-### Stage 4 — Unify the undo stack on the `Outline`
+### Stage 4 — Unify the undo stack on the `Outline` — done
 *Effort: medium. Risk: medium.*
 
 **Decision: the undo stack is per outline.** One document, one history. See
@@ -535,7 +732,7 @@ change — but real.
   by view A must not swallow view B's unrelated edit — assert that groups are not
   interleaved across origins, and fail loudly in unit tests if they are.
 
-### Stage 5 — Move per-view state off the `VNode`
+### Stage 5 — Move per-view state off the `VNode` — done
 *Effort: medium. Risk: medium.*
 
 Move `expandedBit`, `selectedBit`, `insertSpot` and `scrollBarSpot` from `VNode`
@@ -634,7 +831,9 @@ that for the cost of stages 0-3 rather than the cost of the whole thing.
 
 ## Appendix A — Probe scripts
 
-Both require the Qt shim below on `PYTHONPATH` (or a real PyQt6 install).
+On this branch, after stage 1, both probes run with **no** Qt and no shim:
+`PYTHONPATH=. python3 probe.py`. The shim below is what made them runnable
+*before* stage 1, and is kept as the record of how the finding was established.
 
 **`shim/PyQt6/__init__.py`** — enough fake Qt to import Leo headlessly:
 

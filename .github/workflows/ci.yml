@@ -43,6 +43,24 @@ jobs:
       - run: pip install asttokens Pygments "PyQt6>=6.6" PyQt6-QScintilla
       - run: python run_ci_unit_tests.py
 
+  test-no-qt:
+    # Leo's core must import and pass its unit tests with no Qt installed.
+    # Nothing here installs PyQt6 or any Qt system library: that is the point.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install asttokens Pygments
+      - run: python -c "from leo.core import leoApp, leoBridge, leoGui"
+      - run: python run_ci_unit_tests.py
+
   leo-sync:
     # Catch LeoPyRef.leo getting out of sync with its external files.
     # See check_leo_sync.py.

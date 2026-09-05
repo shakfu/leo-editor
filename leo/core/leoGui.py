@@ -16,10 +16,7 @@ from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 from leo.core import leoGlobals as g
 from leo.core import leoFrame
-from leo.core.leoAPI import StringTextWrapper
-from leo.core.leoQt import QtWidgets
-from leo.plugins.qt_frame import LeoQTreeWidget
-from leo.plugins.qt_text import QLineEditWrapper, QTextEditWrapper, QTextMixin
+from leo.core.leoAPI import QTextMixin, StringTextWrapper
 
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
@@ -217,19 +214,28 @@ class LeoKeyEvent:
             trace('w.leo_wrapper', info(wrapper))
             self.w = wrapper
             return
-        if isinstance(w, QtWidgets.QTextEdit):
-            # Inject the `leo_wrapper` ivar into the widget so that this method
-            # will never reallocate another wrapper for this widget.
-            self.w = w.leo_wrapper = QTextEditWrapper(widget=w, name=c.widget_name(w), c=c)
-            trace('New wrapper', f"{self.w.__class__.__name__} for {obj_name(w)}")
-            return
-        if isinstance(w, QtWidgets.QLineEdit):
-            self.w = w.leo_wrapper = QLineEditWrapper(widget=w, name=c.widget_name(w), c=c)
-            trace('New wrapper', f"{self.w.__class__.__name__} for {obj_name(w)}")
-            return
-        if isinstance(w, LeoQTreeWidget):  # A very special case.
-            self.w = w
-            return
+        # Import Qt lazily: leoGui.py must stay importable without Qt.
+        # Without Qt, no widget can match any of the tests below.
+        try:
+            from leo.core.leoQt import QtWidgets
+            from leo.plugins.qt_frame import LeoQTreeWidget
+            from leo.plugins.qt_text import QLineEditWrapper, QTextEditWrapper
+        except ImportError:  # pragma: no cover
+            QtWidgets = None
+        if QtWidgets is not None:
+            if isinstance(w, QtWidgets.QTextEdit):
+                # Inject the `leo_wrapper` ivar into the widget so that this method
+                # will never reallocate another wrapper for this widget.
+                self.w = w.leo_wrapper = QTextEditWrapper(widget=w, name=c.widget_name(w), c=c)
+                trace('New wrapper', f"{self.w.__class__.__name__} for {obj_name(w)}")
+                return
+            if isinstance(w, QtWidgets.QLineEdit):
+                self.w = w.leo_wrapper = QLineEditWrapper(widget=w, name=c.widget_name(w), c=c)
+                trace('New wrapper', f"{self.w.__class__.__name__} for {obj_name(w)}")
+                return
+            if isinstance(w, LeoQTreeWidget):  # A very special case.
+                self.w = w
+                return
 
         # Anything should be valid here: we don't expect the wrapper to do key handling.
         self.w = w

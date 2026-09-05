@@ -11,7 +11,7 @@ from leo.core import leoGlobals as g
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
     from leo.core.leoGui import LeoKeyEvent
-    from leo.plugins.qt_text import QTextMixin
+    from leo.core.leoAPI import QTextMixin
 
 # @-<< baseCommands imports & abbreviations >>
 

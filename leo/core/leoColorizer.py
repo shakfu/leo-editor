@@ -487,7 +487,7 @@ class JEditColorizer(BaseColorizer):
         self.delegate_name: str = ''
 
         # Create the highlighter. The default is NullObject.
-        if isinstance(widget, QtWidgets.QTextEdit):
+        if QtWidgets and isinstance(widget, QtWidgets.QTextEdit):
             self.highlighter = LeoHighlighter(
                 c,
                 colorizer=self,
@@ -1017,6 +1017,10 @@ class JEditColorizer(BaseColorizer):
                     color = self.normalize(color)
                     if color in leo_color_database:
                         color = leo_color_database.get(color, '')
+                    if QtGui is None:
+                        # No Qt: there is nothing to validate the color against,
+                        # and nothing that will draw with it either.
+                        return color
                     qt_color = QtGui.QColor(color)
                     if qt_color.isValid():
                         return color
@@ -1209,7 +1213,7 @@ class JEditColorizer(BaseColorizer):
         a single @language directive, and it may not work properly even then.
         """
         c, widget = self.c, self.widget
-        if isinstance(widget, QtWidgets.QTextEdit):
+        if QtWidgets and isinstance(widget, QtWidgets.QTextEdit):
             # #1919: https://forum.qt.io/topic/99371/how-to-set-tab-stop-width-and-space-width
             fm = QtGui.QFontMetrics(font)
             try:  # fm.horizontalAdvance
@@ -1490,6 +1494,9 @@ class JEditColorizer(BaseColorizer):
         full_tag = f"{self.language}.{tag}"
         font: QtGui.QFont | None = None  # Set below. Define here for report().
         self.n_setTag += 1
+        if QtGui is None:
+            # No Qt: there is no highlighter to apply a format to.
+            return
         if i == j:
             return
         if not tag or not tag.strip():
@@ -3365,7 +3372,7 @@ class PygmentsColorizer(JEditColorizer):
         super().__init__(c, widget)
 
         # Create the highlighter. The default is NullObject.
-        if isinstance(widget, QtWidgets.QTextEdit):
+        if QtWidgets and isinstance(widget, QtWidgets.QTextEdit):
             self.highlighter = LeoHighlighter(
                 c,
                 colorizer=self,
@@ -3416,7 +3423,8 @@ class PygmentsColorizer(JEditColorizer):
         super().reloadSettings()
 
         # Bind methods.
-        if self.use_pygments_styles:
+        # Without Qt there is no QTextCharFormat: use the legacy bindings.
+        if self.use_pygments_styles and QtGui is not None:
             self.getDefaultFormat = QtGui.QTextCharFormat
             self.getFormat = self.getPygmentsFormat
             self.setFormat = self.setPygmentsFormat

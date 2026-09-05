@@ -49,7 +49,7 @@ from leo.plugins import (
     qt_frame,
     qt_idle_time,
 )
-from leo.plugins.qt_text import QTextMixin
+from leo.core.leoAPI import QTextMixin
 
 assert Qt
 assert qt_commands

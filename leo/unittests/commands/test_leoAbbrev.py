@@ -12,7 +12,7 @@ from leo.core.leoGui import LeoKeyEvent, StringFindTabManager
 from leo.core.leoTest2 import LeoUnitTest
 
 if TYPE_CHECKING:
-    from leo.plugins.qt_text import QTextMixin
+    from leo.core.leoAPI import QTextMixin
 
 assert g
 

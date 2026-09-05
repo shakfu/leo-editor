@@ -4,6 +4,7 @@
 # pylint: disable=no-member
 
 from leo.core import leoGlobals as g
+from leo.core import signal_manager
 from leo.core.leoTest2 import LeoUnitTest
 
 
@@ -1046,6 +1047,30 @@ class TestNodes(LeoUnitTest):
             result2 = p.v.atAutoRstNodeName(h=s)
             self.assertEqual(result1, expected1, msg=s)
             self.assertEqual(result2, expected2, msg=s)
+
+    # @+node:sa.20260905120000.1: *4* TestNodes.test_set_body_and_head_string_notify
+    def test_set_body_and_head_string_notify(self):
+        """
+        v.setBodyString and v.setHeadString must notify listeners for str input.
+
+        Until Leo 6.8.x both the signal_manager.emit call and v.contentModified
+        lived in the `bytes` branch, so the normal case -- `p.b = s`, which always
+        passes a str -- notified nobody. leo/plugins/editpane listens for
+        'body_changed' and so never saw an edit.
+        """
+        c, p = self.c, self.c.p
+        hits: list[str] = []
+        for signal in ('body_changed', 'head_changed'):
+            # The bus lives on the outline: every view of it hears the change.
+            signal_manager.connect(c.outline, signal, lambda v, name=signal: hits.append(name))
+        p.b = 'new body'  # A str, via the Position.b property.
+        self.assertEqual(hits, ['body_changed'])
+        p.v.setHeadString('new headline')  # Also a str.
+        self.assertEqual(hits, ['body_changed', 'head_changed'])
+        # The bytes branch must keep working too.
+        p.v.setBodyString(b'bytes body')
+        self.assertEqual(hits, ['body_changed', 'head_changed', 'body_changed'])
+        self.assertEqual(p.b, 'bytes body')
 
     # @+node:ekr.20210830095545.19: *4* TestNodes.test_new_vnodes_methods
     def test_new_vnodes_methods(self):

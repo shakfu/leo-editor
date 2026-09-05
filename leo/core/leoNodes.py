@@ -23,6 +23,7 @@ except Exception:
 
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
+    from leo.core.leoOutline import Outline
 
     Value = Any
 
@@ -2227,15 +2228,13 @@ class VNode:
         'at_read',            # Injected by read code.
         'children',
         'context',            # Not written to any file.
-        'expandedPositions',  # Not written to any file.
         'fileIndex',
         'iconVal',
-        'insertSpot',         # Not written to any file.
         'parents',
-        'scrollBarSpot',      # Not written to any file.
-        'selectionLength',    # Not written to any file.
-        'selectionStart',     # Not written to any file.
         'statusBits',
+        # expandedPositions, insertSpot, scrollBarSpot, selectionStart and
+        # selectionLength are *not* here: they are per-view state, and live in
+        # each view's ViewState. The properties below keep the v.x spelling.
         'tempAttributes',     # Injected by read code.
         'unknownAttributes',
     ]  # fmt: skip
@@ -2257,9 +2256,7 @@ class VNode:
     # 0x010
 
     # Archived bits...
-    expandedBit = 0x04  # fmt: skip  # True: VNode is expanded.
     markedBit   = 0x08  # fmt: skip  # True: VNode is marked.
-    selectedBit = 0x20  # fmt: skip  # VNode is current vnode.
 
     # Not archived...
     richTextBit = 0x080  # fmt: skip  # Do we use <bt> or <btr> tags?.
@@ -2272,7 +2269,7 @@ class VNode:
     # @+others
     # @+node:ekr.20031218072017.3342: *3* v.Birth & death
     # @+node:ekr.20031218072017.3344: *4* v.__init__
-    def __init__(self, context: Cmdr, gnx: str | None = None) -> None:
+    def __init__(self, context: Outline | Cmdr, gnx: str | None = None) -> None:
         """
         Ctor for the VNode class.
         To support ZODB, the code must set v._p_changed = True whenever
@@ -2290,15 +2287,12 @@ class VNode:
 
         # Information that is never written to any file...
 
-        # The context containing context.hiddenRootNode.
-        # Required so we can compute top-level siblings.
-        # It is named .context rather than .c to emphasize its limited usage.
-        self.context: Cmdr = context
-        self.expandedPositions: list[Position] = []  # Positions that should be expanded.
-        self.insertSpot: int | None = None  # Location of previous insert point.
-        self.scrollBarSpot: int | None = None  # Previous value of scrollbar position.
-        self.selectionLength = 0  # The length of the selected body text.
-        self.selectionStart = 0  # The start of the selected body text.
+        # The Outline containing context.hiddenRootNode: the *document* this
+        # node belongs to, never a view. Required so we can compute top-level
+        # siblings. It is named .context rather than .c to emphasize its
+        # limited usage. Callers may still pass a commander; it is normalized
+        # to that commander's outline, so `v.context` is always an Outline.
+        self.context: Outline = getattr(context, 'outline', context)
 
         # For at.read logic.
         self.at_read: dict[str, set] = {}
@@ -2642,7 +2636,14 @@ class VNode:
 
     # @+node:ekr.20031218072017.3373: *5* v.isSelected
     def isSelected(self) -> bool:
-        return (self.statusBits & VNode.selectedBit) != 0
+        """
+        Return True if this node is the current node of the acting view.
+
+        Derived, not stored: with several views of one outline there is no
+        single answer, so the old selectedBit could only ever be wrong.
+        """
+        c = self.context.c
+        return bool(c and c.p and c.p.v is self)
 
     # @+node:ekr.20031218072017.3376: *5* v.isVisited
     def isVisited(self) -> bool:
@@ -2685,21 +2686,89 @@ class VNode:
         self.statusBits &= ~self.writeBit
 
     # @+node:ekr.20031218072017.3395: *5* v.contract/expand/initExpandedBit/isExpanded
+    # Expansion is per *view*: see leoOutline.ViewState. These act on the
+    # acting view -- the window whose command is running -- and on the primary
+    # view otherwise, which is what they did when there could be only one.
+
+    def _view_state(self) -> Any:
+        c = self.context.c
+        return c.view_state if c else None
+
     def contract(self) -> None:
-        """Contract the node."""
-        self.statusBits &= ~self.expandedBit
+        """Contract the node in the acting view."""
+        if vs := self._view_state():
+            vs.contract(self.fileIndex)
 
     def expand(self) -> None:
-        """Expand the node."""
-        self.statusBits |= self.expandedBit
+        """Expand the node in the acting view."""
+        if vs := self._view_state():
+            vs.expand(self.fileIndex)
 
     def initExpandedBit(self) -> None:
-        """Init self.statusBits."""
-        self.statusBits |= self.expandedBit
+        """Expand the node in the acting view, without side effects."""
+        if vs := self._view_state():
+            vs.expand(self.fileIndex)
 
     def isExpanded(self) -> bool:
-        """Return True if the VNode expansion bit is set."""
-        return (self.statusBits & self.expandedBit) != 0
+        """Return True if this node is expanded in the acting view."""
+        vs = self._view_state()
+        return bool(vs and vs.is_expanded(self.fileIndex))
+
+    # @+node:sa.20260905170100.1: *5* v: per-view state properties
+    # These look like plain ivars for the ~30 call sites that assign them,
+    # but each one belongs to a single view.
+
+    @property
+    def expandedPositions(self) -> list:
+        vs = self._view_state()
+        return vs.expanded_positions.setdefault(self.fileIndex, []) if vs else []
+
+    @expandedPositions.setter
+    def expandedPositions(self, val: list) -> None:
+        if vs := self._view_state():
+            vs.expanded_positions[self.fileIndex] = val
+
+    @property
+    def insertSpot(self) -> int | None:
+        vs = self._view_state()
+        return vs.insert_spot.get(self.fileIndex) if vs else None
+
+    @insertSpot.setter
+    def insertSpot(self, val: int | None) -> None:
+        if vs := self._view_state():
+            vs.insert_spot[self.fileIndex] = val
+
+    @property
+    def scrollBarSpot(self) -> int | None:
+        vs = self._view_state()
+        return vs.scroll_spot.get(self.fileIndex) if vs else None
+
+    @scrollBarSpot.setter
+    def scrollBarSpot(self, val: int | None) -> None:
+        if vs := self._view_state():
+            vs.scroll_spot[self.fileIndex] = val
+
+    @property
+    def selectionStart(self) -> int:
+        vs = self._view_state()
+        return vs.selection.get(self.fileIndex, (0, 0))[0] if vs else 0
+
+    @selectionStart.setter
+    def selectionStart(self, val: int) -> None:
+        if vs := self._view_state():
+            _, n = vs.selection.get(self.fileIndex, (0, 0))
+            vs.selection[self.fileIndex] = (val, n)
+
+    @property
+    def selectionLength(self) -> int:
+        vs = self._view_state()
+        return vs.selection.get(self.fileIndex, (0, 0))[1] if vs else 0
+
+    @selectionLength.setter
+    def selectionLength(self, val: int) -> None:
+        if vs := self._view_state():
+            i, _ = vs.selection.get(self.fileIndex, (0, 0))
+            vs.selection[self.fileIndex] = (i, val)
 
     # @+node:ekr.20031218072017.3396: *5* v.initStatus
     def initStatus(self, status: int) -> None:
@@ -2732,10 +2801,13 @@ class VNode:
         self.statusBits |= self.orphanBit
 
     # @+node:ekr.20031218072017.3400: *5* v.setSelected
-    # This only sets the selected bit.
-
     def setSelected(self) -> None:
-        self.statusBits |= self.selectedBit
+        """
+        Do nothing: v.isSelected is derived from the acting view's position.
+
+        Kept so that the handful of scripts and plugins that call it still run.
+        Select a node with c.selectPosition(p).
+        """
 
     # @+node:ekr.20031218072017.3401: *5* v.setVisited
     # Compatibility routine for scripts
@@ -2770,7 +2842,13 @@ class VNode:
 
     # @+node:ville.20120502221057.7498: *4* v.contentModified
     def contentModified(self) -> None:
-        g.contentModifiedSet.add(self)
+        # Record the change only when a plugin is listening.
+        # c.outerUpdate drains g.contentModifiedSet, but it never runs in
+        # leoBridge/leoserver scripts, so an unconditional add would pin every
+        # modified VNode for the life of the process.
+        pc = g.app.pluginsController
+        if pc and pc.handlers.get('contentModified'):
+            g.contentModifiedSet.add(self)
 
     # @+node:ekr.20260622103203.1: *4* v.findAllAncestorAtFileNodes
     def findAllAncestorAtFileNodes(self, *, to_do_set: set[VNode] | None = None) -> list[VNode]:
@@ -2861,8 +2939,11 @@ class VNode:
             v._bodyString = s
         else:  # pragma: no cover
             v._bodyString = g.toUnicode(s, reportErrors=True)
-            self.contentModified()  # #1413.
-            signal_manager.emit(self.context, 'body_changed', self)
+        # These *must* happen for str as well as bytes. Until Leo 6.8.x they
+        # were reachable only from the bytes branch, so `p.b = s` -- the normal
+        # case -- notified nobody and set no modified bit.
+        v.contentModified()  # #1413.
+        signal_manager.emit(v.context, 'body_changed', v)
         v.updateIcon()
 
     def setHeadString(self, s: bytes | str) -> None:
@@ -2872,7 +2953,9 @@ class VNode:
         else:  # pragma: no cover
             s = g.toUnicode(s, reportErrors=True)
             v._headString = s.replace('\n', '')
-            self.contentModified()  # #1413.
+        # As for setBodyString: these must happen on both branches.
+        v.contentModified()  # #1413.
+        signal_manager.emit(v.context, 'head_changed', v)
         # #4394, #4875: Clear the cached mod time (in-memory only).
         v.context.mod_time_cache.pop(v.gnx, None)
         # Update the icon last.

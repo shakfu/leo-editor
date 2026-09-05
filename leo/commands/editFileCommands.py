@@ -376,7 +376,7 @@ class EditFileCommandsClass(BaseEditCommandsClass):
                 if not kind.endswith(('.leo', '.leojs')) and p.isAnyAtFileNode():
                     # Don't make clones of @<file> nodes for wrapped files.
                     pass
-                elif p.v.context == c:
+                elif p.v.context is c.outline:
                     clone = p.clone()
                     clone.moveToLastChildOf(parent)
                 else:
@@ -384,7 +384,7 @@ class EditFileCommandsClass(BaseEditCommandsClass):
                     copy = p.copyTreeAfter()
                     copy.moveToLastChildOf(parent)
                     for p2 in copy.self_and_subtree(copy=False):
-                        p2.v.context = c
+                        p2.v.context = c.outline
 
     # @+node:ekr.20170806094317.17: *4* efc.createFileDict
     def createFileDict(self, c: Cmdr) -> dict[str, Position]:

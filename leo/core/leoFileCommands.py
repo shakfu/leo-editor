@@ -2233,7 +2233,11 @@ class FileCommands:
             return  # New.
         assert self.currentPosition
         current = [str(z) for z in self.currentPosition.archivedPosition()]
-        expanded = [v.gnx for v in c.all_unique_nodes() if v.isExpanded()]
+        # Expansion is per view (leoOutline.ViewState). c.db is per *document*,
+        # so persist the primary view's folds: which window happened to run the
+        # save must not change what the file remembers.
+        primary = c.outline.views[0] if c.outline.views else c
+        expanded = sorted(primary.view_state.expanded & {v.gnx for v in c.all_unique_nodes()})
         marked = [v.gnx for v in c.all_unique_nodes() if v.isMarked()]
         c.db['expanded'] = ','.join(expanded)
         c.db['marked'] = ','.join(marked)

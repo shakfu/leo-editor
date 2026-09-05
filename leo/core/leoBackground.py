@@ -11,7 +11,11 @@ import _thread as thread
 from time import sleep
 from typing import TYPE_CHECKING
 from leo.core import leoGlobals as g
-from leo.core.leoQt import QtCore
+
+try:
+    from leo.core.leoQt import QtCore
+except ImportError:  # No Qt: fall back to idle-time processing only.
+    QtCore = None
 
 if TYPE_CHECKING:  # pragma: no cover
     from subprocess import Popen

@@ -4,12 +4,20 @@
 
 # pylint: disable=line-too-long
 
+import unittest
 from typing import Any
 from leo.core import leoGlobals as g
 from leo.core import leoColorizer
 from leo.core.leoColorizer import JEditColorizer
-from leo.core.leoQt import Qt, QtGui, UnderlineStyle
 from leo.core.leoTest2 import create_app, LeoUnitTest
+
+try:
+    from leo.core.leoQt import Qt, QtGui, UnderlineStyle
+
+    has_qt = True
+except ImportError:  # Qt is optional: skip only the tests that need it.
+    Qt = QtGui = UnderlineStyle = None
+    has_qt = False
 
 assert g
 
@@ -167,6 +175,7 @@ class TestColorizer(LeoUnitTest):
         self.assertEqual(language, 'python')
 
     # @+node:ekr.20260519084534.1: *3* TestQtColorizer.test_underlines_in_setTag
+    @unittest.skipUnless(has_qt, 'Qt is not installed')
     def test_underlines_in_setTag(self):
         # Test the calls in setTag.
         # colorer = self.c.frame.body.colorizer
@@ -1657,6 +1666,7 @@ class TestQtColorizer(LeoUnitTest):
 
     # @+others
     # @+node:ekr.20260519084534.1: *3* TestQtColorizer.test_underlines_in_setTag
+    @unittest.skipUnless(has_qt, 'Qt is not installed')
     def test_underlines_in_setTag(self):
         # Test the calls in setTag.
         # colorer = self.c.frame.body.colorizer
