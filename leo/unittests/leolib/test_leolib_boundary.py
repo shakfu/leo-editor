@@ -88,6 +88,49 @@ class TestLeolibBoundary(unittest.TestCase):
         self.assertEqual(leaks, '', f"leolib imported view modules: {leaks}")
         self.assertEqual(plugins, '', f"leolib imported plugins: {plugins}")
 
+    # @+node:sa.20260907130000.1: *3* TestLeolibBoundary.test_only_importers_and_writers
+    def test_only_importers_and_writers(self):
+        """
+        The one thing leolib may import from leo/plugins is language support.
+
+        An @auto file carries no sentinels, so its structure has to come from a
+        language importer, and there are 34 of those under leo/plugins. They
+        are model machinery -- none touches a front end -- so the rule worth
+        enforcing is "no view module", not "nothing under leo.plugins", which
+        was only ever a proxy for it and is wrong for exactly these.
+
+        Nothing else under leo.plugins may be imported, and they must stay
+        lazy: an outline with no @auto node pays nothing for them.
+        """
+        out = run_isolated(f"""
+            import sys
+            from leo import leolib
+            from leo.core import leoGlobals as g
+            leolib.ensure_app()
+            before = len([m for m in sys.modules if m.startswith('leo.plugins')])
+            g.app.atAutoDict          # First touch: loads the importers.
+            after = sorted(m for m in sys.modules if m.startswith('leo.plugins'))
+            other = [m for m in after
+                     if not m.startswith(('leo.plugins.importers',
+                                          'leo.plugins.writers'))
+                     and m != 'leo.plugins']
+            view = {VIEW_MODULES!r}
+            leaks = [m for m in sys.modules
+                     if m.startswith('leo.') and any(k in m for k in view)]
+            print('BEFORE', before)
+            print('AFTER', len(after))
+            print('OTHER', ','.join(other))
+            print('LEAKS', ','.join(sorted(leaks)))
+        """)
+        before = int(out.split('BEFORE')[1].split('\n')[0].strip())
+        after = int(out.split('AFTER')[1].split('\n')[0].strip())
+        other = out.split('OTHER')[1].split('\n')[0].strip()
+        leaks = out.split('LEAKS')[1].split('\n')[0].strip()
+        self.assertEqual(before, 0, 'the importers loaded before anything asked')
+        self.assertGreater(after, 20, 'the importers did not load')
+        self.assertEqual(other, '', f"leolib imported other plugins: {other}")
+        self.assertEqual(leaks, '', f"a view module came in with them: {leaks}")
+
     # @+node:sa.20260906110000.6: *3* TestLeolibBoundary.test_round_trip_pulls_in_no_view_module
     def test_round_trip_pulls_in_no_view_module(self):
         """
@@ -264,6 +307,82 @@ class TestLeolibApi(LeoUnitTest):
     """leolib's own behaviour, in-process."""
 
     # @+others
+    # @+node:sa.20260907140000.1: *3* TestLeolibApi.test_all_supported_directives
+    def test_all_supported_directives(self):
+        """
+        Every supported @<file> directive reads and writes.
+
+        LeoPyRef.leo contains only @file, @clean and @edit, so the corpus that
+        looked comprehensive -- 376 files, byte-identical -- covered half the
+        directive set. This builds the other half. @auto matters most of the
+        three that were missing: it is one of the three Leo recommends, and it
+        is the only kind whose structure comes from a language importer rather
+        than from the file.
+
+        Sentinels are the dividing line: only @file carries them. Everything
+        else must come out as a file with nothing Leo-specific in it.
+        """
+        from leo import leolib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # An @auto node imports an existing file, so write one first.
+            auto_py = os.path.join(tmp, 'auto.py')
+            with open(auto_py, 'w', encoding='utf-8') as f:
+                f.write('def alpha():\n    return 1\n')
+            leo_file = os.path.join(tmp, 'six.leo')
+
+            outline = leolib.new_outline()
+            root = outline.rootPosition()
+            root.h, root.b = 'root', ''
+
+            def add(headline, body, child=None):
+                p = root.insertAsLastChild()
+                p.h, p.b = headline, body
+                if child:
+                    c = p.insertAsLastChild()
+                    c.h, c.b = child
+                return p
+
+            others = '@language python\n@others\n'
+            add('@file f.py', others, ('body', 'f = 1\n'))
+            add('@clean c.py', others, ('body', 'c = 1\n'))
+            add('@edit e.py', 'e = 1\n')
+            add('@asis a.py', 'a = 1\n')
+            add('@nosent n.py', others, ('body', 'n = 1\n'))
+            add('@auto auto.py', '')
+            leolib.save(outline, leo_file)
+            leolib.write_external_files(outline)
+
+            expected = {
+                'f.py': 'f = 1',
+                'c.py': 'c = 1',
+                'e.py': 'e = 1',
+                'a.py': 'a = 1',
+                'n.py': 'n = 1',
+            }
+            for name, content in expected.items():
+                path = os.path.join(tmp, name)
+                self.assertTrue(os.path.exists(path), f"{name} was not written")
+                with open(path, encoding='utf-8') as f:
+                    text = f.read()
+                self.assertIn(content, text, name)
+                # Only @file carries sentinels.
+                self.assertEqual('@+leo' in text, name == 'f.py', f"{name}: wrong sentinel policy")
+
+            # Now @auto: read via a language importer, edited, written back.
+            # Reopening is what imports it: the .leo file records only the
+            # node itself, never its children.
+            outline = leolib.open_outline(leo_file)
+            auto = next(p for p in outline.all_unique_positions() if p.h == '@auto auto.py')
+            self.assertEqual([c.h for c in auto.children()], ['function: alpha'])
+            fn = auto.firstChild()
+            fn.b = fn.b.replace('return 1', 'return 42')
+            self.assertEqual(leolib.write_external_files(outline), 1)
+            with open(auto_py, encoding='utf-8') as f:
+                text = f.read()
+            self.assertIn('return 42', text)
+            self.assertNotIn('@+leo', text, '@auto must carry no sentinels')
+
     # @+node:sa.20260907110000.2: *3* TestLeolibApi.test_write_external_files
     def test_write_external_files(self):
         """

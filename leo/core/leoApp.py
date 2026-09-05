@@ -4,7 +4,6 @@
 # @+node:ekr.20120219194520.10463: ** << leoApp imports >>
 from __future__ import annotations
 from collections.abc import Callable
-import importlib
 import io
 import os
 import subprocess
@@ -18,6 +17,7 @@ import zipfile
 import platform
 from leo.core import leoGlobals as g
 from leo.core import leoLanguageData
+from leo.core import leoPluginRegistry
 from leo.core import leoExternalFiles
 from leo.core.leoCache import GlobalCacher
 
@@ -36,7 +36,6 @@ if TYPE_CHECKING:  # pragma: no cover
     from subprocess import Popen
     from leo.plugins.qt_events import LossageData
     from leo.plugins.qt_idle_time import IdleTime
-    from types import ModuleType
 
     # Do not import these at the top level: they would cause circular imports.
     from leo.core.leoGui import LeoKeyEvent, LeoFrame, LeoGui
@@ -978,17 +977,13 @@ class LeoApp:
     # @+node:ekr.20140727180847.17985: *4* app.scanner_for_at_auto
     def scanner_for_at_auto(self, p: Position) -> Callable | None:
         """A factory returning a scanner function for p, an @auto node."""
-        d = g.app.atAutoDict
-        for key in d:
-            func = d.get(key)
-            if func and g.match_word(p.h, 0, key):
-                return func
-        return None
+        # Defined in leoPluginRegistry, with the tables it fills.
+        return leoPluginRegistry.scanner_for_at_auto(g.app, p)
 
     # @+node:ekr.20140130172810.15471: *4* app.scanner_for_ext
     def scanner_for_ext(self, ext: str) -> Callable | None:
         """A factory returning a scanner function for the given file extension."""
-        return g.app.classDispatchDict.get(ext)
+        return leoPluginRegistry.scanner_for_ext(g.app, ext)
 
     # @+node:ekr.20170429152049.1: *3* app.listenToLog
     @cmd('listen-to-log')
@@ -2005,135 +2000,14 @@ class LoadManager:
     # @+node:ekr.20140724064952.18037: *6* LM.createImporterData & helper
     def createImporterData(self) -> None:
         """Create the data structures describing importer plugins."""
-        # Allow plugins to be defined in ~/.leo/plugins.
-        for pattern in (
-            # ~/.leo/plugins.
-            g.finalize_join(g.app.homeDir, '.leo', 'plugins'),
-            # leo/plugins/importers.
-            g.finalize_join(g.app.loadDir, '..', 'plugins', 'importers', '*.py'),
-        ):
-            filenames = g.glob_glob(pattern)
-            for filename in filenames:
-                sfn = g.shortFileName(filename)
-                if sfn.endswith('.py') and sfn != '__init__.py':
-                    try:
-                        module_name = sfn[:-3]
-                        language_name = 'rst' if module_name == 'leo_rst' else module_name
-                        # Important: use importlib to give imported modules their fully qualified names.
-                        m = importlib.import_module(f"leo.plugins.importers.{module_name}")
-                        if module_name != 'base_importer':
-                            g.app.importerModulesDict[language_name] = m
-                            self.parse_importer_dict(sfn, m)
-                    except Exception:
-                        g.warning(f"can not import leo.plugins.importers.{module_name}")
-                        g.printObj(filenames)
+        # Defined in leoPluginRegistry: reading an @auto node must not require
+        # a running application. See LEO_REFACTOR.md.
+        leoPluginRegistry.create_importer_data(g.app)
 
-        # Leo 6.7.8: Create g.app.importerClassesDict.
-        for language_name in g.app.importerModulesDict:
-            m = g.app.importerModulesDict.get(language_name, '')
-            for z in dir(m):
-                # A hack: all importer subclasses should end with '_Importer'.
-                if z.endswith('_Importer'):
-                    if importer_class := getattr(m, z, None):
-                        g.app.importerClassesDict[language_name] = importer_class
-                        break
-            else:
-                g.trace(f"No importer for {language_name}")
-
-    # @+node:ekr.20140723140445.18076: *7* LM.parse_importer_dict
-    def parse_importer_dict(self, sfn: str, m: ModuleType) -> None:
-        """
-        Set entries in g.app.classDispatchDict, g.app.atAutoDict and
-        g.app.atAutoNames using entries in m.importer_dict.
-        """
-        if importer_d := getattr(m, 'importer_dict', None):
-            at_auto = importer_d.get('@auto', [])
-            scanner_func = importer_d.get('func', None)
-            # scanner_name = scanner_class.__name__
-            extensions = importer_d.get('extensions', [])
-            if at_auto:
-                # Make entries for each @auto type.
-                d = g.app.atAutoDict
-                for s in at_auto:
-                    d[s] = scanner_func
-                    g.app.atAutoDict[s] = scanner_func
-                    g.app.atAutoNames.add(s)
-            if extensions:
-                # Make entries for each extension.
-                d = g.app.classDispatchDict
-                for ext in extensions:
-                    d[ext] = scanner_func  # importer_d.get('func')#scanner_class
-        elif sfn not in (
-            # This is a base class, not a real plugin.
-            'base_importer.py',
-        ):
-            g.warning(f"leo/plugins/importers/{sfn} has no importer_dict")
-
-    # @+node:ekr.20140728040812.17990: *6* LM.createWritersData & helper
+    # @+node:ekr.20140728040812.17990: *6* LM.createWritersData
     def createWritersData(self) -> None:
         """Create the data structures describing writer plugins."""
-        # Do *not* remove this trace.
-        trace = False and 'createWritersData' not in g.app.debug_dict
-        if trace:
-            # Suppress multiple traces.
-            g.app.debug_dict['createWritersData'] = True
-        g.app.writersDispatchDict = {}
-        g.app.atAutoWritersDict = {}
-
-        # Allow plugins to be defined in ~/.leo/plugins.
-        for pattern in (
-            # ~/.leo/plugins.
-            g.finalize_join(g.app.homeDir, '.leo', 'plugins'),
-            # leo/plugins/writers
-            g.finalize_join(g.app.loadDir, '..', 'plugins', 'writers', '*.py'),
-        ):
-            for filename in g.glob_glob(pattern):
-                sfn = g.shortFileName(filename)
-                if sfn.endswith('.py') and sfn != '__init__.py':
-                    try:
-                        # Important: use importlib to give imported modules their fully qualified names.
-                        m = importlib.import_module(f"leo.plugins.writers.{sfn[:-3]}")
-                        self.parse_writer_dict(sfn, m)
-                    except Exception:
-                        g.es_exception()
-                        g.warning(f"can not import leo.plugins.writers.{sfn}")
-        if trace:
-            g.trace('LM.writersDispatchDict')
-            g.printDict(g.app.writersDispatchDict)
-            g.trace('LM.atAutoWritersDict')
-            g.printDict(g.app.atAutoWritersDict)
-
-    # @+node:ekr.20140728040812.17991: *7* LM.parse_writer_dict
-    def parse_writer_dict(self, sfn: str, m: ModuleType) -> None:
-        """
-        Set entries in g.app.writersDispatchDict and g.app.atAutoWritersDict
-        using entries in m.writers_dict.
-        """
-        if writer_d := getattr(m, 'writer_dict', None):
-            at_auto = writer_d.get('@auto', [])
-            scanner_class = writer_d.get('class', None)
-            extensions = writer_d.get('extensions', [])
-            if at_auto:
-                # Make entries for each @auto type.
-                d = g.app.atAutoWritersDict
-                for s in at_auto:
-                    aClass = d.get(s)
-                    if aClass and aClass != scanner_class:
-                        g.trace(f"{sfn}: duplicate {s} class {aClass.__name__} in {m.__file__}:")
-                    else:
-                        d[s] = scanner_class
-                        g.app.atAutoNames.add(s)
-            if extensions:
-                # Make entries for each extension.
-                d = g.app.writersDispatchDict
-                for ext in extensions:
-                    aClass = d.get(ext)
-                    if aClass and aClass != scanner_class:
-                        g.trace(f"{sfn}: duplicate {ext} class", aClass, scanner_class)
-                    else:
-                        d[ext] = scanner_class
-        elif sfn not in ('basewriter.py',):
-            g.warning(f"leo/plugins/writers/{sfn} has no writer_dict")
+        leoPluginRegistry.create_writers_data(g.app)
 
     # @+node:ekr.20120219154958.10478: *5* LM.createGui
     def createGui(self, pymacs: bool) -> None:

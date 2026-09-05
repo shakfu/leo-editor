@@ -192,15 +192,57 @@ That exercise found one more viewless crash in the *read* path --
 an `@clean` file differs from the outline, i.e. exactly the case an external
 edit produces.
 
+### The directive set
+
+Leo supports six `@<file>` directives. `@file`, `@clean` and `@auto` are the
+recommended ones; `@asis` and `@nosent` are for special occasions; an `@edit`
+node holds an entire file. (`@shadow` is deprecated and does not count.)
+
+`LeoPyRef.leo` contains **only `@file`, `@clean` and `@edit`**, so the corpus
+that looked comprehensive -- 376 files, byte-identical -- exercised half the
+set. Worse, the boundary test's "no `leo.plugins` module" assertion passed
+*vacuously*: an outline with one `@auto` node would have failed it or exposed
+the crash underneath. `test_all_supported_directives` builds the other half.
+
+| directive | | read | write |
+|---|---|---|---|
+| `@file` | recommended | yes | yes, with sentinels |
+| `@clean` | recommended | yes | yes |
+| `@auto` | recommended | yes, via a language importer | yes |
+| `@edit` | | yes | yes |
+| `@asis` | special | — | yes |
+| `@nosent` | special | — | yes |
+
+**`@auto` forced a boundary decision.** Its files have no sentinels, so their
+structure comes from one of 34 language importers under `leo/plugins`, chosen
+through dispatch tables that `LoadManager` built while starting the
+application. The rule worth enforcing was always *leolib imports no view
+module*; "nothing under `leo.plugins`" was a proxy for it, and a wrong one for
+exactly these 34 -- none of them touches a front end. So:
+
+- `leo/core/leoPluginRegistry.py` holds the registration, taking the object
+  that owns the tables rather than reaching for `g.app`. `LoadManager` calls
+  it while starting Leo; leolib calls it with its own minimal app. Same move
+  as `leoLanguageData`, and it removes the duplication rather than adding any.
+- The importers load **lazily**, on first touch of a dispatch table. Loading
+  them eagerly tripled leolib's module count (11 to 46) for every caller, and
+  most outlines contain no `@auto` node at all.
+- `test_only_importers_and_writers` replaces the blanket ban: nothing else
+  under `leo.plugins` may be imported, no view module may arrive with them,
+  and they must not load before something asks.
+
+Two more viewless bugs fell out: `writeOneAtNosentNode` and
+`writeOneAtAsisNode` took the node for the `before-writing-external-file` hook
+from `c.p` -- whatever happened to be selected, rather than the node being
+written -- and `leoImport.createOutline` moved a caret that does not exist.
+
 ### Still to do
 
 - **`leogui` / `leotui` / `leoweb` do not exist as packages.** `leo/tui` is the
   terminal front end and needs renaming; the Qt front end is spread across
   `leo/plugins/qt_*` and the Qt halves of `leoFrame`; `leoweb` is unstarted, with
   `leoserver` as the obvious seed.
-- **`leolib.write_external_files` does not write `@auto` or `@shadow` trees.**
-  Those have their own writers, and `@auto` needs the 36 importer/writer
-  plugins. `@file`, `@clean`, `@edit` and `@nosent` are covered.
+- **All six supported directives now read and write.** See below.
 - **`DefaultConfig` is riskier for writing than for reading.** "No settings" is
   not "Leo's shipped settings": `leoSettings.leo` ships `@int page-width = 80`
   against a code default of 132. Nothing currently reachable from the writer
@@ -225,7 +267,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 933 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
+| 0 — Safety net | **done** — 935 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -242,7 +284,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 933 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 935 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -257,7 +299,7 @@ All four CI gates pass, headless *and* under real PyQt6 via `uv run`:
 ruff check leo         All checks passed!
 ruff format --check    557 files already formatted
 ty check leo           All checks passed!
-run_ci_unit_tests.py   933 passed  (23 skips headless, 4 under Qt)
+run_ci_unit_tests.py   935 passed  (23 skips headless, 4 under Qt)
 check_leo_sync         LeoPyRef.leo is in sync
 ```
 

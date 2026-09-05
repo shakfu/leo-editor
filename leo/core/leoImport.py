@@ -621,9 +621,10 @@ class LeoImportCommands:
         # Remember the full fileName.
         c.atFileCommands.rememberReadPath(fileName, p)
         p.contract()
-        w = c.frame.body.wrapper
-        w.setInsertPoint(0)
-        w.seeInsertPoint()
+        if c.frame:  # No window: no caret to put at the top of the new node.
+            w = c.frame.body.wrapper
+            w.setInsertPoint(0)
+            w.seeInsertPoint()
         return p
 
     # @+node:ekr.20140724064952.18038: *5* ic.dispatch & helpers

@@ -119,6 +119,19 @@ class _MinimalApp:
         self.scriptResult: Any = None
         # at.putOpenLeoSentinel asks. Leo's own default.
         self.force_at_auto_sentinels = False
+        self.debug_dict: dict[str, Any] = {}
+        self.loadDir = g.os_path_dirname(g.os_path_abspath(leoNodes.__file__))
+        # The @auto dispatch tables. Filled on first use, not here: an @auto
+        # file has no sentinels, so its structure has to come from a language
+        # importer -- but importing all 34 of them triples the module count,
+        # and most outlines contain no @auto node at all. See _load_plugins.
+        self._plugins_loaded = False
+        self._atAutoDict: dict[str, Any] = {}
+        self._atAutoWritersDict: dict[str, Any] = {}
+        self._classDispatchDict: dict[str, Any] = {}
+        self._writersDispatchDict: dict[str, Any] = {}
+        self.importerModulesDict: dict[str, Any] = {}
+        self.importerClassesDict: dict[str, Any] = {}
         # g.es_print_error consults it for a colour. There are no global
         # settings without a settings file, which is the truth here.
         self.config = None
@@ -154,6 +167,68 @@ class _MinimalApp:
         """No windows exist. @g.command decorators run at import time and ask."""
         return self.commanders_list
 
+    # @+node:sa.20260907120000.6: *3* _MinimalApp: the @auto tables
+    # Reading or writing an @auto node needs the language importers and
+    # writers. They are the one thing under leo/plugins that leolib imports,
+    # and they earn it: none of the 34 modules touches a front end. Loading is
+    # deferred to first use so that an outline without an @auto node never
+    # pays for them -- which is most outlines. See leoPluginRegistry.
+
+    def _load_plugins(self) -> None:
+        if self._plugins_loaded:
+            return
+        self._plugins_loaded = True  # First, so a failure is not retried forever.
+        from leo.core import leoPluginRegistry
+
+        leoPluginRegistry.create_importer_data(self)
+        leoPluginRegistry.create_writers_data(self)
+
+    @property
+    def atAutoDict(self) -> dict[str, Any]:
+        self._load_plugins()
+        return self._atAutoDict
+
+    @atAutoDict.setter
+    def atAutoDict(self, d: dict[str, Any]) -> None:
+        self._atAutoDict = d
+
+    @property
+    def atAutoWritersDict(self) -> dict[str, Any]:
+        self._load_plugins()
+        return self._atAutoWritersDict
+
+    @atAutoWritersDict.setter
+    def atAutoWritersDict(self, d: dict[str, Any]) -> None:
+        self._atAutoWritersDict = d
+
+    @property
+    def classDispatchDict(self) -> dict[str, Any]:
+        self._load_plugins()
+        return self._classDispatchDict
+
+    @classDispatchDict.setter
+    def classDispatchDict(self, d: dict[str, Any]) -> None:
+        self._classDispatchDict = d
+
+    @property
+    def writersDispatchDict(self) -> dict[str, Any]:
+        self._load_plugins()
+        return self._writersDispatchDict
+
+    @writersDispatchDict.setter
+    def writersDispatchDict(self, d: dict[str, Any]) -> None:
+        self._writersDispatchDict = d
+
+    def scanner_for_at_auto(self, p: Any) -> Any:
+        from leo.core import leoPluginRegistry
+
+        return leoPluginRegistry.scanner_for_at_auto(self, p)
+
+    def scanner_for_ext(self, ext: str) -> Any:
+        from leo.core import leoPluginRegistry
+
+        return leoPluginRegistry.scanner_for_ext(self, ext)
+
     # @-others
 
 
@@ -167,8 +242,20 @@ def ensure_app() -> None:
     """
     if g.app is None:
         g.app = _MinimalApp()
-    elif getattr(g.app, 'nodeIndices', None) is None:
+        return  # Its dispatch tables fill themselves on first use.
+    if getattr(g.app, 'nodeIndices', None) is None:
         g.app.nodeIndices = leoNodes.NodeIndices('leolib')
+    if isinstance(g.app, _MinimalApp):
+        return
+    if not getattr(g.app, 'classDispatchDict', None):
+        # Somebody else's app, started without registering the language
+        # importers -- a unit test, or a host that never opened a file.
+        # Reading an @auto node is impossible without them, and filling empty
+        # tables takes nothing away from whoever owns this app.
+        from leo.core import leoPluginRegistry
+
+        leoPluginRegistry.create_importer_data(g.app)
+        leoPluginRegistry.create_writers_data(g.app)
 
 
 # @+node:sa.20260906100000.6: ** leolib.new_outline

@@ -1851,7 +1851,10 @@ class AtFile:
 
         This code is adapted from at.writeOneAtCleanNode.
         """
-        at, c, p = self, self.c, self.c.p
+        # The hook below is told which node is being written. That used
+        # to be self.c.p -- whatever happened to be selected -- which is
+        # both less useful and unavailable with no window.
+        at, c, p = self, self.c, root
         try:
             self.outline.endEditing()
             fileName = at.initWriteIvars(root)
@@ -1897,7 +1900,10 @@ class AtFile:
         root is the position of an @<file> node.
         sentinels will be False for @clean and @nosent nodes.
         """
-        at, c, p = self, self.c, self.c.p
+        # The hook below is told which node is being written. That used
+        # to be self.c.p -- whatever happened to be selected -- which is
+        # both less useful and unavailable with no window.
+        at, c, p = self, self.c, root
         try:
             self.outline.endEditing()
             fileName = at.initWriteIvars(root)
