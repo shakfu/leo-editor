@@ -584,6 +584,7 @@ class Commands:
             c.frame.menu.finishCreate()
         if getattr(c.frame, 'log', None):
             c.frame.log.finishCreate()
+        c.outline.subscribe_view(c)  # Follow changes made through other views.
         c.undoer.clearUndoState()
         if c.vimCommands and c.vim_mode:
             c.vimCommands.finishCreate()  # Menus must exist at this point.
@@ -2274,6 +2275,72 @@ class Commands:
     def undoer(self, u: Any) -> None:
         self.outline.undoer = u
 
+    # @+node:sa.20260905190200.1: *4* c.getBodyText & c.setBodyText
+    def getBodyText(self, p: Position = None) -> str:
+        """
+        Return a node's body text, from the *model*.
+
+        Prefer this to c.frame.body.wrapper.getAllText(). The wrapper answers
+        for one window and only for the node that window is showing; the model
+        answers for the document. They agree -- typing writes p.v.b through
+        u.doTyping, and every view follows the model's events -- but only the
+        model is guaranteed to be about the node you asked for.
+        """
+        c = self
+        p = p or c.p
+        return p.b if p else ''
+
+    def setBodyText(self, s: str, p: Position = None) -> None:
+        """
+        Set a node's body text in the model, and let every view follow.
+
+        Prefer this to c.frame.body.wrapper.setAllText().
+        """
+        c = self
+        p = p or c.p
+        if p:
+            c.setBodyString(p, s)
+
+    # @+node:sa.20260905190100.1: *4* c: model event handlers
+    # Registered by Outline.subscribe_view. The model never calls a view
+    # directly; these are how *this* view learns that someone else changed the
+    # document. See LEO_REFACTOR.md, stage 6.
+
+    def on_model_body_changed(self, v: VNode, origin: Commands = None) -> None:
+        """Repaint the body pane when another view changed the node we show."""
+        c = self
+        if origin is c or not c.exists:
+            return  # We made this change: our widget is already right.
+        if not c.p or c.p.v is not v:
+            return  # We are not showing that node.
+        w = c.frame.body.wrapper
+        if not w:
+            return
+        s = v.b
+        if w.getAllText() == s:
+            return
+        # Keep this view's caret where the user left it, clamped to the new text.
+        ins = min(w.getInsertPoint(), len(s))
+        i, j = w.getSelectionRange()
+        w.setAllText(s)  # Guards onTextChanged, so this cannot loop.
+        w.setSelectionRange(min(i, len(s)), min(j, len(s)), insert=ins)
+
+    def on_model_outline_changed(self, v: VNode, origin: Commands = None) -> None:
+        """Redraw when another view changed a headline, the shape or a status bit."""
+        c = self
+        if origin is c or not c.exists:
+            return
+        c.redraw_later()
+
+    def on_model_bulk_changed(self, v: VNode = None, origin: Commands = None) -> None:
+        """Refresh everything after a batched change, whoever made it."""
+        c = self
+        if not c.exists:
+            return
+        c.redraw_later()
+        if c.p:
+            c.on_model_body_changed(c.p.v, origin=None)
+
     # @+node:ekr.20060906211747.1: *4* c.Setters
     # @+node:ekr.20040315032503: *5* c.appendStringToBody
     def appendStringToBody(self, p: Position, s: str) -> None:
@@ -3361,6 +3428,11 @@ class Commands:
                     # cannot know which window the user is working in.
                     with c.outline.acting_view(c):
                         return_value = command_func(event)
+                        if c.outline.structure_dirty:
+                            # The command changed the outline's shape: no other
+                            # view knows yet, and one of them may be sitting on
+                            # a node this command deleted.
+                            c.outline.revalidate_views(acting_c=c)
                 except Exception:
                     g.es_exception()
                     return_value = None
@@ -5018,7 +5090,7 @@ class Commands:
         c = self
         brackets = "()[]{}"
         w = c.frame.body.wrapper
-        s = w.getAllText()
+        s = c.getBodyText()  # The text is the model's; the caret is the view's.
         ins = w.getInsertPoint()
 
         # fmt: off
@@ -5130,8 +5202,7 @@ class Commands:
     # @+node:ekr.20031218072017.2978: *6* c.canShiftBodyLeft/Right
     def canShiftBodyLeft(self) -> bool:
         c = self
-        w = c.frame.body.wrapper
-        return w and w.getAllText()
+        return bool(c.getBodyText())
 
     canShiftBodyRight = canShiftBodyLeft
 

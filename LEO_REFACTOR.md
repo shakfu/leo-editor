@@ -38,18 +38,19 @@ upstreamable on their own merits.
 
 ## Status
 
-Branch `decouple-model-gui`. Stages 0, 1, 3, 4 and 5 are **done**; stage 2's bug fix is
-done and the rest of stage 2 is not started.
+Branch `decouple-model-gui`. Stages 0 through 6 are **done** apart from two deliberately
+skipped items; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 891 tests, run headless, with and without Qt |
+| 0 — Safety net | **done** — 899 tests, run headless, with and without Qt |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
-| 2 — Model notifications | **partly done** — the branch bug is fixed and tested; the wider event set, batching and the freewin conversion remain |
+| 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
 | 4 — Unify the undo stack on the `Outline` | **done** — one history, acting-view semantics, position clamping |
 | 5 — Move per-view state off the `VNode` | **done** — independent folds, caret and scroll per view |
-| 6-7 | not started |
+| 6 — Model authoritative for body text | **done** — live sync between views; 27 mechanical call sites remain |
+| 7 — Per-view GUI | not started, and still looks unnecessary |
 
 **Two Qt windows on one outline now work**, with coherent undo and independent folds.
 That was the milestone this plan set as the point to judge the rest by, and stages 4 and
@@ -59,7 +60,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 891 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 899 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -190,12 +191,84 @@ document-level; selecting a sibling view's position is allowed.
   `LeoPyRef.leo` — rather than walking the outline, which measures ~9ms at 11k nodes.
   File-load time is unchanged at 0.25s.
 
+**Stage 2, completed — the event set** (5 new tests):
+
+- The bus moved onto the `Outline` as `outline.emit(signal, v)`, so batching and origin
+  live in one place instead of at each call site. Five signals, documented in the source:
+
+  | Signal | Emitted by |
+  |---|---|
+  | `body_changed` | `v.setBodyString` |
+  | `head_changed` | `v.setHeadString` |
+  | `structure_changed` | `v.childrenModified`, i.e. every link and unlink |
+  | `status_changed` | `v.setDirty`, `v.setMarked`, `v.clearMarked` |
+  | `bulk_changed` | one event standing in for a batch |
+
+- **Every event carries `origin`** — the view whose command caused it, or `None` for a
+  script. Listeners are called as `listener(v, origin=c)`. Without it a view cannot
+  ignore its own events, and stage 6 would have every keystroke fighting the caret of
+  the window doing the typing.
+- `outline.batch_events()` coalesces a bulk operation into one `bulk_changed`, and is
+  wrapped around `fc.getAnyLeoFileByName` and `at.readAll`. Measured on `LeoPyRef.leo`
+  with five listeners attached: a full 11,291-node reload delivers **1** event instead
+  of tens of thousands, and file-load time is unchanged at 0.24s.
+- `revalidate_views` is now called once per command that changed the outline's shape,
+  via a `structure_dirty` flag that `c.doCommand` checks. Deliberately *not* a
+  `structure_changed` listener: that fires per link, so subscribing would run an
+  O(views) sweep hundreds of times during a single paste. Undo was not the only way one
+  window can delete the node another is sitting on.
+
+**Stage 6 — the model is authoritative for body text** (4 new tests):
+
+- `Outline.subscribe_view(c)` wires each view to the document's bus, and
+  `c.on_model_body_changed` repaints the body pane when *another* view changes the node
+  this one is showing. That is the whole feature: text typed in one window now appears
+  in the other immediately, with no reselect. The following view keeps its own caret,
+  clamped when the new text is shorter.
+- A view **ignores its own events** via `origin`. Without that, every keystroke would
+  replace the widget's text under the typist's cursor.
+- `c.getBodyText(p)` / `c.setBodyText(s, p)` are the model-authoritative API. The widget
+  answers for one window and only for the node that window shows; the model answers for
+  the document.
+- `status_changed` deliberately does **not** trigger a redraw: a dirty or marked bit
+  only changes an icon, `v.updateIcon` already pokes every tree, and a redraw resets the
+  body caret. Subscribing to it broke `test_delete_key_sticks_in_body`, which is exactly
+  the bug that test exists to catch.
+
+**The stage was far smaller than this plan estimated, and the estimate was wrong for a
+specific reason.** Finding 4 counted ~660 text-wrapper calls and called the stage "weeks".
+Most of those are not the body pane at all: **125** take `w = event.w`, the widget that
+currently has focus, which may be a headline editor, the minibuffer, the log or the find
+box. Those must stay widget-based; converting them would be a bug. Only **77** name
+`c.frame.body.wrapper`, and of those only **32** read or write body *text* rather than
+selection or scroll — the rest are view state that stage 6 always meant to leave alone.
+
+Of the 32, thirteen are correct as they stand: the view refresh itself, undo restoring
+the acting view's widget, and this stage's own repaint. Five unambiguous ones are
+converted — including `GoToCommands.show_line`, whose docstring already said "line n2 of
+p.b" while the code read the widget. **The remaining 27 are mechanical**, listed by
+`python3 -c` over `leo/core` and `leo/commands` for `w = c.frame.body.wrapper` plus
+`getAllText`/`setAllText`. They are a tidiness task now rather than a correctness one:
+with the model updated on every keystroke by `u.doTyping` and every view following its
+events, the widget and the model no longer disagree.
+
 ### What is *not* fixed yet
 
-Opening a second view today has one known gap left, by design:
-
-- **Body sync only on selection change** (stage 6). Text typed in view A reaches view B
-  when B next selects that node, not keystroke by keystroke.
+- **27 mechanical call sites still read the body through the widget.** Not a correctness
+  bug any more (see stage 6 above), but they should be `c.getBodyText()`.
+- **`c.p` is still set inside `LeoTree.set_body_text_after_select`**, which is model
+  state assigned during a view refresh. I moved it to `change_current_position`, where
+  it belongs, and all 899 tests passed — then reverted it. On Qt, `w.setAllText` runs
+  the `QSyntaxHighlighter` synchronously and `JEditColorizer.recolor` reads `c.p` to
+  pick the language, so moving it colorizes the new node with the old node's language.
+  The tests cannot see this: the null gui has no highlighter. The reason is recorded in
+  the source so the next person does not repeat the experiment.
+- **`freewin` still idle-polls.** Converting it was stage 2's completeness proof, but it
+  is a 1,000-line Qt plugin with subtle widget state and no way to run it here, so a
+  blind rewrite would prove nothing. The event set is instead proved by a listener that
+  runs in CI and asserts it sees every kind of mutation. Convert freewin on a machine
+  with Qt; the events it needs are now live. (Worth a look while you are in there: its
+  idle handler walks `c.all_unique_positions()` on every tick, per open window.)
 
 `Outline` currently forwards 25 attributes and methods to its acting view. That list is
 deliberately explicit rather than a `__getattr__`, because it *is* the remaining
@@ -598,11 +671,11 @@ the tests green. Effort figures are rough calibration, not estimates.
 |---|---|---|---|---|---|
 | 0 | Headless CI safety net | small | none | permission to touch anything | **done** |
 | 1 | Break the import-time Qt dependency | small | low | `import leo` with no Qt; upstreamable | **done** |
-| 2 | Fix and complete model notifications | small-med | low | a live event bus; upstreamable bug fix | bug fixed |
+| 2 | Fix and complete model notifications | small-med | low | a live event bus; upstreamable bug fix | **done** |
 | 3 | Extract `Outline` from `Commands` | medium | medium | **two views on one outline** | **done** |
 | 4 | Unify the undo stack on the `Outline` | medium | medium | coherent undo across views | **done** |
 | 5 | Move per-view state off the `VNode` | medium | medium | independent expansion/scroll per view | **done** |
-| 6 | Make the model authoritative for body text | large | medium | live sync of an actively-edited body | next |
+| 6 | Make the model authoritative for body text | large | medium | live sync of an actively-edited body | **done** |
 | 7 | Per-view GUI, retire `g.app.gui` | large | high | heterogeneous views in one process | optional |
 
 Stages 1-5 are the project. Stage 6 is the long tail. Stage 7 is optional and probably
@@ -649,7 +722,7 @@ headless path actually *calls* Qt, so the imports are removable rather than repl
 **Ship this one on its own.** It is plausibly upstreamable as a standalone packaging
 improvement, independent of everything that follows.
 
-### Stage 2 — Fix and complete model notifications — bug fix done
+### Stage 2 — Fix and complete model notifications — done
 *Effort: small-medium. Risk: low. Value: unblocks everything downstream.*
 
 - **Fix the branch bug** in `VNode.setBodyString` / `setHeadString` so `str` assignments
@@ -752,7 +825,7 @@ Move `expandedBit`, `selectedBit`, `insertSpot` and `scrollBarSpot` from `VNode`
 After this, two panes can be expanded, scrolled and hoisted independently on the same
 outline. Combined with stages 3 and 4, this is a genuinely usable multi-view Leo.
 
-### Stage 6 — Make the model authoritative for body text
+### Stage 6 — Make the model authoritative for body text — done
 *Effort: large. This is the real work.*
 
 The ~660 wrapper calls. Do **not** attempt this as one sweep.

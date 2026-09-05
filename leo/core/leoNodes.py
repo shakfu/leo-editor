@@ -13,7 +13,6 @@ import time
 import uuid
 from typing import Any, TYPE_CHECKING
 from leo.core import leoGlobals as g
-from leo.core import signal_manager
 
 # Third party.
 try:
@@ -2671,6 +2670,7 @@ class VNode:
     def clearMarked(self) -> None:
         v = self
         v.statusBits &= ~v.markedBit
+        v.context.emit('status_changed', v)
         v.updateIcon()
 
     # @+node:ekr.20031218072017.3392: *5* v.clearOrphan
@@ -2784,12 +2784,14 @@ class VNode:
         """
         v = self
         v.statusBits |= v.dirtyBit
+        v.context.emit('status_changed', v)
         v.updateIcon()
 
     # @+node:ekr.20031218072017.3398: *5* v.setMarked & initMarkedBit
     def setMarked(self) -> None:
         v = self
         v.statusBits |= v.markedBit
+        v.context.emit('status_changed', v)
         v.updateIcon()
 
     def initMarkedBit(self) -> None:
@@ -2821,7 +2823,12 @@ class VNode:
 
     # @+node:ville.20120502221057.7499: *4* v.childrenModified
     def childrenModified(self) -> None:
-        g.childrenModifiedSet.add(self)
+        # Called wherever a child is linked or unlinked, so it is also the
+        # right place to tell the document's listeners that v's children moved.
+        self.context.emit('structure_changed', self)
+        pc = g.app.pluginsController
+        if pc and pc.handlers.get('childrenModified'):
+            g.childrenModifiedSet.add(self)
 
     # @+node:ekr.20031218072017.3385: *4* v.computeIcon & setIcon
     def computeIcon(self) -> int:  # pragma: no cover
@@ -2943,7 +2950,7 @@ class VNode:
         # were reachable only from the bytes branch, so `p.b = s` -- the normal
         # case -- notified nobody and set no modified bit.
         v.contentModified()  # #1413.
-        signal_manager.emit(v.context, 'body_changed', v)
+        v.context.emit('body_changed', v)
         v.updateIcon()
 
     def setHeadString(self, s: bytes | str) -> None:
@@ -2955,7 +2962,7 @@ class VNode:
             v._headString = s.replace('\n', '')
         # As for setBodyString: these must happen on both branches.
         v.contentModified()  # #1413.
-        signal_manager.emit(v.context, 'head_changed', v)
+        v.context.emit('head_changed', v)
         # #4394, #4875: Clear the cached mod time (in-memory only).
         v.context.mod_time_cache.pop(v.gnx, None)
         # Update the icon last.

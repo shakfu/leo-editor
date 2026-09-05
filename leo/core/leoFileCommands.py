@@ -953,10 +953,13 @@ class FileCommands:
         c = self.c
         fc = c.fileCommands
         self.gnxDict = {}  # #1437
-        if path.endswith('.db'):
-            v = fc._getLeoDBFileByName(path, readAtFileNodesFlag)
-        else:
-            v = fc._getLeoFileByName(path, readAtFileNodesFlag)
+        # Reading a 10,000-node file must not emit 10,000 events: one
+        # 'bulk_changed' stands in for the whole load. See Outline.batch_events.
+        with c.outline.batch_events():
+            if path.endswith('.db'):
+                v = fc._getLeoDBFileByName(path, readAtFileNodesFlag)
+            else:
+                v = fc._getLeoFileByName(path, readAtFileNodesFlag)
         if v:
             c.frame.resizePanesToRatio(c.frame.compute_ratio(), c.frame.compute_secondary_ratio())
             if checkOpenFiles:

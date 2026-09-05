@@ -105,7 +105,7 @@ class TestOutline(LeoUnitTest):
         c = self.c
         c2 = self.second_view()
         heard: list[str] = []
-        signal_manager.connect(c.outline, 'body_changed', lambda v: heard.append(v.h))
+        signal_manager.connect(c.outline, 'body_changed', lambda v, origin=None: heard.append(v.h))
         # An edit made through *either* view reaches a listener on the outline.
         c2.rootPosition().h = 'root'
         c2.rootPosition().b = 'from the second view'
@@ -383,6 +383,218 @@ class TestOutline(LeoUnitTest):
             c.setCurrentPosition(c.rootPosition())
             c.outline.revalidate_views()
             self.assertNotIn(gnx, c.view_state.expanded_positions)
+
+    # @+node:sa.20260905180100.1: *3* TestOutline.record_events
+    def record_events(self, c, signals=None):
+        """Subscribe to the outline's bus and return the list events land in."""
+        heard: list[tuple] = []
+        signals = signals or (
+            'body_changed',
+            'head_changed',
+            'structure_changed',
+            'status_changed',
+            'bulk_changed',
+        )
+        for sig in signals:
+            signal_manager.connect(
+                c.outline,
+                sig,
+                lambda v, origin=None, sig=sig: heard.append((sig, v and v.h, origin)),
+            )
+        return heard
+
+    # @+node:sa.20260905180100.2: *3* TestOutline.test_the_event_set_covers_every_mutation
+    def test_the_event_set_covers_every_mutation(self):
+        """
+        Every way of changing the model must reach a listener.
+
+        A view that cannot see a change cannot stay in sync, and both in-tree
+        second-view plugins had to poll because of gaps here.
+        """
+        c = self.c
+        root = c.rootPosition()
+        root.h = 'root'
+        heard = self.record_events(c)
+
+        root.b = 'body'
+        self.assertIn('body_changed', [z[0] for z in heard])
+
+        heard.clear()
+        root.h = 'renamed'
+        self.assertIn('head_changed', [z[0] for z in heard])
+
+        heard.clear()
+        child = root.insertAsLastChild()
+        child.h = 'child'
+        self.assertIn('structure_changed', [z[0] for z in heard])
+
+        heard.clear()
+        child.setMarked()
+        self.assertIn('status_changed', [z[0] for z in heard])
+
+        heard.clear()
+        child.clearMarked()
+        self.assertIn('status_changed', [z[0] for z in heard])
+
+        heard.clear()
+        child.doDelete()
+        c.setCurrentPosition(c.rootPosition())
+        self.assertIn('structure_changed', [z[0] for z in heard])
+
+    # @+node:sa.20260905180100.3: *3* TestOutline.test_events_carry_their_origin
+    def test_events_carry_their_origin(self):
+        """
+        A listener must be able to tell which window caused a change.
+
+        Without it a view cannot ignore its own events, and stage 6 would make
+        every keystroke fight the caret of the window doing the typing.
+        """
+        c = self.c
+        c.rootPosition().h = 'root'
+        c2 = self.second_view()
+        heard = self.record_events(c, ('body_changed',))
+        with c.outline.acting_view(c2):
+            c2.rootPosition().b = 'typed in the second view'
+        with c.outline.acting_view(c):
+            c.rootPosition().b = 'typed in the first view'
+        c.rootPosition().b = 'from a script'
+        self.assertEqual([z[2] for z in heard], [c2, c, None])
+
+    # @+node:sa.20260905180100.4: *3* TestOutline.test_bulk_changes_are_coalesced
+    def test_bulk_changes_are_coalesced(self):
+        """Reading a 10,000-node file must not deliver 10,000 events."""
+        c = self.c
+        root = c.rootPosition()
+        root.h = 'root'
+        heard = self.record_events(c)
+        with c.outline.batch_events():
+            for i in range(50):
+                p = root.insertAsLastChild()
+                p.h = f'child {i}'
+                p.b = f'body {i}'
+        self.assertEqual([z[0] for z in heard], ['bulk_changed'])
+        # Nesting is safe: only the outermost block delivers.
+        heard.clear()
+        with c.outline.batch_events():
+            with c.outline.batch_events():
+                root.b = 'x'
+            self.assertEqual(heard, [])
+        self.assertEqual([z[0] for z in heard], ['bulk_changed'])
+
+    # @+node:sa.20260905180100.5: *3* TestOutline.test_a_structural_command_revalidates_views
+    def test_a_structural_command_revalidates_views(self):
+        """
+        c.doCommand sweeps the views when a command changed the outline's shape.
+
+        Undo is not the only way one window can delete the node another is
+        sitting on.
+        """
+        c = self.c
+        c.rootPosition().h = 'root'
+        child = c.rootPosition().insertAsLastChild()
+        child.h = 'child'
+        c2 = self.second_view()
+        c2.selectPosition(c2.rootPosition().lastChild())
+        self.assertEqual(c2.p.h, 'child')
+
+        def delete_the_child(event=None):
+            c.rootPosition().lastChild().doDelete()
+            c.setCurrentPosition(c.rootPosition())
+
+        # Building the tree above already set the flag: start from a clean slate.
+        c.outline.structure_dirty = False
+        c.doCommand(delete_the_child, 'delete-the-child')
+        # The other view was sitting on the deleted node.
+        self.assertTrue(c2.positionExists(c2.p), c2.p)
+        self.assertEqual(c2.p.h, 'root')
+        self.assertFalse(c.outline.structure_dirty)
+
+    # @+node:sa.20260905190300.1: *3* TestOutline.test_body_text_syncs_live_between_views
+    def test_body_text_syncs_live_between_views(self):
+        """
+        A change to a node's body reaches every view showing it, at once.
+
+        Until stage 6 the widget was authoritative between selection changes,
+        so a second view showed stale text until it reselected the node.
+        """
+        c = self.c
+        root = c.rootPosition()
+        root.h, root.b = 'root', 'original'
+        c2 = self.second_view()
+        c.selectPosition(c.rootPosition())
+        c2.selectPosition(c2.rootPosition())
+        w, w2 = c.frame.body.wrapper, c2.frame.body.wrapper
+        self.assertEqual(w2.getAllText(), 'original')
+        with c.outline.acting_view(c):
+            c.p.b = 'typed in the first view'
+        # No reselect, no redraw: the second view's widget is already right.
+        self.assertEqual(w2.getAllText(), 'typed in the first view')
+        self.assertEqual(w.getAllText(), 'typed in the first view')
+
+    # @+node:sa.20260905190300.2: *3* TestOutline.test_a_view_keeps_its_caret_when_another_edits
+    def test_a_view_keeps_its_caret_when_another_edits(self):
+        """
+        Following someone else's edit must not move this view's caret.
+
+        The caret is clamped when the new text is shorter than the old one.
+        """
+        c = self.c
+        root = c.rootPosition()
+        root.h, root.b = 'root', 'a long original body'
+        c2 = self.second_view()
+        c.selectPosition(c.rootPosition())
+        c2.selectPosition(c2.rootPosition())
+        w2 = c2.frame.body.wrapper
+        w2.setInsertPoint(5)
+        with c.outline.acting_view(c):
+            c.p.b = 'another long body here'
+        self.assertEqual(w2.getInsertPoint(), 5)  # Untouched.
+        with c.outline.acting_view(c):
+            c.p.b = 'tiny'
+        self.assertEqual(w2.getAllText(), 'tiny')
+        self.assertEqual(w2.getInsertPoint(), 4)  # Clamped, not out of range.
+
+    # @+node:sa.20260905190300.3: *3* TestOutline.test_a_view_ignores_its_own_edits
+    def test_a_view_ignores_its_own_edits(self):
+        """
+        The view that made a change must not repaint from its own event.
+
+        Repainting would replace the widget's text under the user's cursor on
+        every keystroke.
+        """
+        c = self.c
+        c.rootPosition().h = 'root'
+        c.selectPosition(c.rootPosition())
+        w = c.frame.body.wrapper
+        calls = []
+        original = w.setAllText
+
+        def counting_setAllText(s):
+            calls.append(s)
+            original(s)
+
+        w.setAllText = counting_setAllText
+        try:
+            with c.outline.acting_view(c):
+                c.p.v.setBodyString('typed here')
+        finally:
+            w.setAllText = original
+        self.assertEqual(calls, [], 'the acting view repainted its own widget')
+
+    # @+node:sa.20260905190300.4: *3* TestOutline.test_get_and_set_body_text
+    def test_get_and_set_body_text(self):
+        """c.getBodyText/c.setBodyText answer for the document, not a window."""
+        c = self.c
+        root = c.rootPosition()
+        root.h, root.b = 'root', 'body'
+        other = root.insertAsLastChild()
+        other.h, other.b = 'other', 'other body'
+        c.selectPosition(c.rootPosition())
+        self.assertEqual(c.getBodyText(), 'body')
+        # A node this window is *not* showing: the widget could not answer.
+        self.assertEqual(c.getBodyText(c.rootPosition().lastChild()), 'other body')
+        c.setBodyText('changed', p=c.rootPosition().lastChild())
+        self.assertEqual(c.rootPosition().lastChild().b, 'changed')
 
     # @+node:sa.20260905150000.12: *3* TestOutline.test_removing_a_view
     def test_removing_a_view(self):

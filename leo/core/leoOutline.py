@@ -23,6 +23,7 @@ See LEO_REFACTOR.md for the staged plan this belongs to.
 # @+node:sa.20260905130000.2: ** << leoOutline imports and annotations >>
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
+from leo.core import signal_manager
 
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
@@ -116,6 +117,9 @@ class Outline:
         # The views attached to this outline. views[0] is the primary view.
         self.views: list[Cmdr] = [c]
         self._acting_c: Cmdr | None = None  # See self.acting_view.
+        self._batch_depth = 0  # See self.batch_events.
+        self._pending: set[str] = set()
+        self.structure_dirty = False  # Set by 'structure_changed', read by c.doCommand.
 
         # Model state owned by the document.
         self.hiddenRootNode: VNode = None  # Set by Commands.initObjects.
@@ -147,6 +151,72 @@ class Outline:
         if c in self.views:
             self.views.remove(c)
 
+    # @+node:sa.20260905180000.1: *3* outline.events
+    # The document's event bus. Views subscribe with
+    # signal_manager.connect(outline, signal, listener); the model never calls
+    # a view directly. Listeners are called as listener(v, origin=c), where
+    # origin is the view whose command caused the change, or None for a script.
+    # A view ignores its own events by testing `origin is self.c`.
+
+    #     body_changed       v      a node's body text changed
+    #     head_changed       v      a node's headline changed
+    #     structure_changed  v      children of v were inserted, deleted or moved
+    #     status_changed     v      a dirty or marked bit changed
+    #     bulk_changed       None   many nodes changed at once (see batch_events)
+
+    def emit(self, signal: str, v: VNode = None) -> None:
+        """Tell every listener about a change to this document."""
+        if signal == 'structure_changed':
+            # Checked once per command by c.doCommand, not once per link.
+            self.structure_dirty = True
+        if self._batch_depth:
+            self._pending.add(signal)
+            return
+        signal_manager.emit(self, signal, v, origin=self._acting_c)
+
+    def batch_events(self) -> Any:
+        """
+        A context manager that coalesces events during a bulk operation.
+
+        Reading a 10,000-node file must not emit 10,000 events. Inside the
+        block nothing is delivered; on exit a single `bulk_changed` stands in
+        for whatever happened, and listeners refresh wholesale.
+        """
+        outline = self
+
+        class _Batch:
+            def __enter__(self_) -> None:
+                outline._batch_depth += 1
+
+            def __exit__(self_, *args: object) -> None:
+                outline._batch_depth -= 1
+                if outline._batch_depth == 0 and outline._pending:
+                    outline._pending.clear()
+                    signal_manager.emit(outline, 'bulk_changed', None, origin=outline._acting_c)
+
+        return _Batch()
+
+    # @+node:sa.20260905190000.1: *3* outline.subscribe_view
+    def subscribe_view(self, c: Cmdr) -> None:
+        """
+        Make view c follow this document.
+
+        Until stage 6 the body widget was authoritative between selection
+        changes, so a change made anywhere else -- another window, a script --
+        was invisible until the view happened to reselect the node. Now the
+        model tells every view, and each view repaints itself.
+
+        A view ignores its own events: it made the change, its widget is
+        already right, and repainting would move the user's caret mid-keystroke.
+        """
+        signal_manager.connect(self, 'body_changed', c.on_model_body_changed)
+        # Not 'status_changed': a dirty or marked bit only changes a node's
+        # icon, and v.updateIcon already pokes every tree. Redrawing for it
+        # would be wasteful, and a redraw resets the body caret.
+        for signal in ('head_changed', 'structure_changed'):
+            signal_manager.connect(self, signal, c.on_model_outline_changed)
+        signal_manager.connect(self, 'bulk_changed', c.on_model_bulk_changed)
+
     # @+node:sa.20260905160100.1: *3* outline.revalidate_views
     def revalidate_views(self, acting_c: Cmdr = None) -> None:
         """
@@ -160,9 +230,13 @@ class Outline:
         Views other than acting_c are also asked to redraw: the change happened
         in someone else's window, so nothing else would prompt them.
 
-        Stage 2 of LEO_REFACTOR.md adds a `structure_changed` event; when it
-        lands this becomes a listener for it instead of an explicit call.
+        Called once per command that changed the outline's shape, and after
+        every undo and redo. Deliberately *not* a listener for
+        'structure_changed': that fires on each individual link and unlink, so
+        subscribing would run this O(views) sweep hundreds of times during a
+        single paste.
         """
+        self.structure_dirty = False
         from leo.core.leoNodes import Position
 
         for c in self.views:

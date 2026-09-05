@@ -1062,7 +1062,9 @@ class TestNodes(LeoUnitTest):
         hits: list[str] = []
         for signal in ('body_changed', 'head_changed'):
             # The bus lives on the outline: every view of it hears the change.
-            signal_manager.connect(c.outline, signal, lambda v, name=signal: hits.append(name))
+            signal_manager.connect(
+                c.outline, signal, lambda v, origin=None, name=signal: hits.append(name)
+            )
         p.b = 'new body'  # A str, via the Position.b property.
         self.assertEqual(hits, ['body_changed'])
         p.v.setHeadString('new headline')  # Also a str.

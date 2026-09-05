@@ -156,8 +156,12 @@ class LeoEditPane(QtWidgets.QWidget):
         return w
 
     # @+node:tbrown.20171028115438.8: *3* _after_body_key
-    def _after_body_key(self, v):
+    def _after_body_key(self, v, origin=None):
         """_after_body_key - after Leo selects another node
+
+        :param origin: the view whose command caused the change, or None for a
+            script. Several views may share one outline, so listeners that
+            drive a widget should ignore their own events.
 
         FIXME: although class EditCommandsClass-->insert &
         delete...-->selfInsertCommand() implies that bodykey2 should fire

@@ -509,8 +509,9 @@ class GoToCommands:
         c.selectPosition(p)
         c.redraw(p)
         # Put the cursor on line n2 of the body text.
-        s = w.getAllText()
-        ins = g.convertRowColToPythonIndex(s, n2 - 1, 0)
+        # The model, not the widget: the docstring above says p.b, and only the
+        # model is guaranteed to be about the node we just selected.
+        ins = g.convertRowColToPythonIndex(p.b, n2 - 1, 0)
         c.frame.clearStatusLine()
         c.frame.putStatusLine(f"goto-global-line found: {n2}")
         w.setInsertPoint(ins)
@@ -544,9 +545,8 @@ def show_file_line(event: LeoKeyEvent | None = None) -> None:
         g.es_print('Line not found')
         return
     # This does not work after @others or section references.
-    i = w.getInsertPoint()
-    s = w.getAllText()
-    row, col = g.convertPythonIndexToRowCol(s, i)  # 0-based
+    i = w.getInsertPoint()  # The caret is view state: ask the widget.
+    row, col = g.convertPythonIndexToRowCol(c.p.b, i)  # 0-based
     # g.trace('n0', n0, 'row', row)
     g.es_print('line', n0 + row)
 

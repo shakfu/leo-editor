@@ -724,7 +724,7 @@ class SpellTabHandler:
         sc = self.spellController
         w = c.frame.body.wrapper
         c.selectPosition(p)
-        s = w.getAllText().rstrip()
+        s = p.b.rstrip()  # The body we just selected, from the model.
         ins = w.getInsertPoint()
         last_p = p.copy()
         while True:

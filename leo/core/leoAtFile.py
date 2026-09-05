@@ -469,13 +469,16 @@ class AtFile:
         c.init_error_dialogs()
         files = at.findFilesToRead(root, all=True)
         efc = g.app.externalFilesController
-        for p in files:
-            at.readFileAtPosition(p)
-            # An @<file> was read: In case this was a tab opened earlier, for which efc had entries,
-            # we need to update the external files controller's timestamp for those external files
-            # instead of leaving the _time_d empty, which would have defaulted to set_time's default.
-            if efc:
-                efc.set_time(c.fullPath(p))  # #4426 Same effect as leaving efc's _time_d empty.
+        # Coalesce the per-node events of a whole-tree read into one.
+        with c.outline.batch_events():
+            for p in files:
+                at.readFileAtPosition(p)
+                # An @<file> was read: In case this was a tab opened earlier, for which efc had
+                # entries, we need to update the external files controller's timestamp for those
+                # external files instead of leaving the _time_d empty, which would have defaulted
+                # to set_time's default.
+                if efc:
+                    efc.set_time(c.fullPath(p))  # #4426 Same as leaving efc's _time_d empty.
         for p in files:
             p.v.clearDirty()
         if not g.unitTesting and files:  # pragma: no cover

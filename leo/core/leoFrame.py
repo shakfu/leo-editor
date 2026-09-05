@@ -1004,6 +1004,14 @@ class LeoTree:
 
         # Part 2: set the new text. This forces a recolor.
         # Important: set c.p *before* setting text.
+        #
+        # Setting model state inside a view refresh is backwards, and stage 6
+        # of LEO_REFACTOR.md meant to move it to change_current_position, which
+        # runs just after. Do not: on Qt, w.setAllText runs the QSyntaxHighlighter
+        # synchronously, and JEditColorizer.recolor reads c.p to pick the
+        # language. Moving it colorizes the new node with the old node's
+        # language. The unit tests do *not* catch this -- the null gui has no
+        # highlighter -- so they pass either way.
         c.p = p
         w.setAllText(s)
 
