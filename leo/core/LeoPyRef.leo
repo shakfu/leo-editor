@@ -133,7 +133,8 @@
 <v t="sa.20260907120000.1"><vh>@file leoPluginRegistry.py</vh></v>
 <v t="ekr.20031218072017.3320"><vh>@file leoNodes.py</vh></v>
 <v t="sa.20260905130000.1"><vh>@file leoOutline.py</vh></v>
-<v t="sa.20260906100000.1"><vh>@file ../leolib/__init__.py</vh></v>
+<v t="sa.20260908130000.1"><vh>@file ../leolib/__init__.py</vh></v>
+<v t="sa.20260906100000.1"><vh>@file ../leolib/api.py</vh></v>
 <v t="sa.20260905210000.1"><vh>@file ../tui/__init__.py</vh></v>
 <v t="sa.20260905210100.1"><vh>@file ../tui/model.py</vh></v>
 <v t="sa.20260905210200.1"><vh>@file ../tui/screen.py</vh></v>
