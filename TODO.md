@@ -16,12 +16,12 @@ leolib                the model and its machinery. No view, ever.
 
 **Where it stands.** `leolib` exists and can open, create, edit, view and save
 `.leo` files, including every `@<file>` directive. Opening `LeoPyRef.leo` and
-reading all 376 of its external files puts 11 `leo.*` entries in `sys.modules`,
+reading all 376 of its external files puts 14 `leo.*` entries in `sys.modules`,
 none of them a view module; the same file through `leoBridge` puts in 102, nine
-of them views. But `leolib` is still a facade over `leo/core` rather than a
-package of its own — see section 3. None of the three front ends uses it yet.
-935 tests pass headless and under real PyQt6; `ruff`, `ty` and `check_leo_sync`
-are clean.
+of them views. The package now holds three modules of its own — `util`, `state`
+and `api` — but the model still lives in `leo/core`; see section 3. None of the
+three front ends uses it yet. 941 tests pass headless and under real PyQt6;
+`ruff`, `ty` and `check_leo_sync` are clean.
 
 ---
 
@@ -70,51 +70,63 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 
 ## 3. Make `leolib` a package, not a facade
 
-`leo/leolib/__init__.py` is one file that defines no model code. `Outline`,
-`VNode`, `Position`, the readers and the writers all still live in `leo/core`.
-What the file actually contributes is `_MinimalApp` — a stand-in for `g.app`,
-now carrying only data: the language tables, the XML prolog and the flags
-`g.doHook` and `g.es` consult — plus lazy `@auto` dispatch tables and a
-seven-function API.
+`leo/leolib/` now holds three modules of its own:
 
-That was deliberate. The expensive part of this refactor was the dependency
-edges, not the file layout; moving files first would have made every later diff
-unreviewable against upstream Leo and broken `check_leo_sync` while the boundary
-was still moving. But it leaves the seam enforced by a test rather than by
-structure, and nothing stops a caller from importing `leo.core.leoOutline`
-directly and bypassing it.
+| module | what it is |
+|---|---|
+| `util.py` | 273 names — everything in `leoGlobals` that never reads `g.app`. Imports nothing from Leo but `state`. |
+| `state.py` | The five flags Leo rebinds while it runs, plus the reporting seam. Imports nothing at all. |
+| `api.py` | The library: `open_outline`, `save`, `tangle`, `write_external_files`. |
 
-It also makes "imports no view module" weaker than it sounds. `leoGlobals` is
-8,974 lines with 13 references to `g.app.gui`; they sit in functions `leolib`
-never calls, so the import graph looks clean while the dependency is still
-there. A full open + read-all-external + serialize uses **38 of its 389
-functions**. The other 90% comes along for the ride.
+`leoGlobals` imports every name in `util` back, so `g.splitLines` and
+`util.splitLines` are the same object and no caller changed. It is 6,076 lines,
+down from 8,975. The arrow points one way: `leoGlobals` depends on `util`,
+never the reverse, and `test_leolib_util` fails the build if that changes.
 
-In dependency order:
+**What the split cost, and what it taught.** Three rules came out of it, each
+found by a failure rather than by design:
 
-- [x] **Move the gnx allocator off `g.app` and onto the `Outline`.** Done.
-      `VNode.__init__` now asks `self.context.nodeIndices`, so creating a node
-      needs no `g.app` at all; `Outline.nodeIndices` shares the app's allocator
-      when there is one and takes its own from the constructor when there is
-      not. This answers a request `leoNodes` had carried for years: *"To make
-      VNode's independent of Leo's core, wrap all calls to the VNode ctor."*
-      **The invariant to preserve:** allocators are shared per *process*, not
-      per outline. A gnx is `userId.timestamp.counter`, so two allocators with
-      one user id mint the same gnx inside the same second, and Leo copies
-      nodes between outlines. Giving each `leolib` outline its own collided
-      with the test harness on the first run — and reported it only as a
-      printed internal error, with every test still green.
-      `test_gnxs_do_not_collide_with_the_host` now covers it.
-- [ ] **Split `leoGlobals`.** The elephant, and the reason the boundary is not
-      yet structural. Extract the ~40 functions the model needs, and have
-      `leoGlobals` re-export them so nothing upstream breaks. Do it *before* the
-      move, not after: it is the step that decides which files the move can
-      take, and it is where the real work is.
-- [ ] **`git mv` the modules into `leo/leolib/`.** Mechanical, and worth doing
-      only once the two steps above have landed. `check_leo_sync` pairs
-      `leo/core/*.py` against nodes in `LeoPyRef.leo`, so it changes in the same
-      commit. Until then the layout is honest about what it is: a named subset,
-      held in place by `test_leolib_boundary`.
+- *A name something rebinds at run time cannot be re-exported by value.*
+  `g.unitTesting = True` sets `leoGlobals`' copy; a reader in `util` goes on
+  seeing `False`. `g.chdir` returns early during tests, stopped doing so, and a
+  test three files later found its working directory deleted. Those names live
+  in `state.py`, and `leoGlobals` presents them through a module *class* with
+  properties — a module `__getattr__` would be shadowed by the first assignment.
+- *The same applies to functions Leo swaps out.* `leoApp` redirects stdout under
+  pythonw, `leoserver` redirects the log to its client, `mod_speedups`
+  substitutes faster path helpers. All three now patch `g.<name>` **and**
+  `util.<name>`; `test_runtime_patches_hit_both_modules` reads the source to
+  enforce it, because at run time the failure is silent.
+- *Moving code between Leo files means moving sentinels.* A `<< section >>`
+  whose body all moved has to go completely, or the reference left in the root's
+  body has no node behind it; and a moved body carrying sentinels of its own
+  needs its levels shifted. Two gnx collisions came from reusing ids. All three
+  were caught by `check_leo_sync`, and by nothing else.
+
+**Still to do:**
+
+- [ ] **The model needs 13 names that `leoGlobals` still owns**, at 137 call
+      sites — down from 51 names and 983 sites. In order of weight:
+      `g.app` (77 uses), `g.doHook` (24), `g.command` and `g.new_cmd_decorator`
+      (12), `g.setGlobalOpenDir` (10), `g.getOutputNewline` (5), the five
+      language-table helpers (7), `g.getScript` and `g.openWithFileName` (2).
+      Each needs a seam of its own, and the shape is now established:
+      `state.log_sink` is the worked example.
+- [ ] **The language tables are the easiest of them.** `leoLanguageData` already
+      holds the data; the helpers read `g.app.language_delims_dict` only because
+      `LeoApp` copies it there and a user can extend it. A hook like
+      `state.log_sink` closes this.
+- [ ] **`g.app` itself is the last one and the biggest.** `_MinimalApp` exists
+      because of it. Everything left on it is either a window (`doHook`'s plugin
+      controller, `getScript`'s frame) or settings (`getOutputNewline`).
+- [ ] **`git mv` the model into `leo/leolib/`.** `leoNodes`, `leoOutline`,
+      `leoFileCommands`, `leoAtFile`, `leoShadow`, `leoLanguageData`,
+      `signal_manager`, `leoPluginRegistry`. Worth doing when the list above is
+      empty and not before: while they still import `leoGlobals`, moving them
+      makes `leo/leolib` depend on `leo/core`, which is the wrong direction and
+      harder to see once the files have moved. `check_leo_sync` pairs
+      `leo/core/*.py` against nodes in `LeoPyRef.leo` and changes in the same
+      commit.
 
 ---
 
@@ -220,7 +232,7 @@ Not oversights — each was investigated and left deliberately.
 ## Running the checks
 
 ```bash
-uv run python run_ci_unit_tests.py      # 935 tests; 4 skips under Qt, 23 without
+uv run python run_ci_unit_tests.py      # 941 tests; 4 skips under Qt, 23 without
 uv run ruff check leo
 uv run ruff format --check leo
 uv run ty check leo
