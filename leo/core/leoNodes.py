@@ -2305,17 +2305,21 @@ class VNode:
         # For at.read logic.
         self.at_read: dict[str, set] = {}
 
-        # To make VNode's independent of Leo's core,
-        # wrap all calls to the VNode ctor::
-
-        #   def allocate_vnode(c,gnx):
-        #       v = VNode(c)
-        #       g.app.nodeIndices.new_vnode_helper(c,gnx,v)
-        if g.app and g.app.nodeIndices:
-            g.app.nodeIndices.new_vnode_helper(self.context, gnx, self)
-            assert self.fileIndex, g.callers()
-            return
-        raise ValueError(f"VNode.__init__: not initialized: {g.callers()}")
+        # Allocate this node's gnx. The allocator is asked of the *document*,
+        # not of g.app: an Outline shares the app's allocator when there is
+        # one, and can be given its own when there is not. That is what lets
+        # leolib create nodes with no LeoApp in the process, and it answers a
+        # request the source has carried here for years -- "to make VNode's
+        # independent of Leo's core, wrap all calls to the VNode ctor".
+        ni = getattr(self.context, 'nodeIndices', None)
+        if ni is None:
+            # No context at all. Only the hidden root is created that way, and
+            # new_vnode_helper handles it, but it still needs an allocator.
+            ni = getattr(g.app, 'nodeIndices', None)
+        if ni is None:
+            raise ValueError(f"VNode.__init__: not initialized: {g.callers()}")
+        ni.new_vnode_helper(self.context, gnx, self)
+        assert self.fileIndex, g.callers()
 
     # @+node:ekr.20031218072017.3345: *4* v.__repr__ & v.__str__
     def __repr__(self) -> str:  # pragma: no cover

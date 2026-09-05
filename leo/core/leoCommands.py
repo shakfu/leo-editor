@@ -2092,6 +2092,11 @@ class Commands:
         return self.outline.fileCommands
 
     @property
+    def nodeIndices(self) -> Any:
+        """This document's gnx allocator. See Outline.nodeIndices."""
+        return self.outline.nodeIndices
+
+    @property
     def undoer(self) -> Any:
         return self.outline.undoer
 
@@ -2412,7 +2417,7 @@ class Commands:
         c = self
         # Keys are gnx's; values are lists of (id(v), v).
         vnode_d: dict[str, list[tuple[int, VNode]]] = {}
-        ni = g.app.nodeIndices
+        ni = c.nodeIndices
         assert ni
         t1 = time.time()
 

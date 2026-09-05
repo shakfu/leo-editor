@@ -208,7 +208,7 @@ class PersistenceDataController:
             # Fix #526: A major bug: this was not set!
             assert p1.v
             p1.v.fileIndex = gnx
-        g.app.nodeIndices.updateLastIndex(g.toUnicode(gnx))
+        self.c.nodeIndices.updateLastIndex(g.toUnicode(gnx))
 
     # @+node:ekr.20140711111623.17892: *5* pd.create_uas
     def create_uas(self, at_uas: Position, root: Position) -> None:

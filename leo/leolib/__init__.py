@@ -69,19 +69,18 @@ __all__ = [
 # @+node:sa.20260906100000.3: ** class _MinimalApp
 class _MinimalApp:
     """
-    The least g.app that VNode and the .leo reader actually require.
+    The least g.app that the .leo reader and writer actually require.
 
     g.app is a process-wide singleton carrying the gui, the window list and the
-    open-file list -- none of which a library has any business creating. But
-    VNode.__init__ reaches through it for the gnx allocator, and the source has
-    carried a comment about that since long before this refactor:
+    open-file list -- none of which a library has any business creating. What
+    is left here is data, not machinery: comment delimiters, file extensions,
+    the XML prolog, and the flags g.doHook and g.es consult. Every one of them
+    is a constant that leolib reads and never writes.
 
-        # To make VNode's independent of Leo's core,
-        # wrap all calls to the VNode ctor
-
-    This is that wrapper, for now. gnx allocation is document-level and belongs
-    on the Outline; until it moves, leolib installs this rather than booting
-    LeoApp, which would load settings, plugins and a gui.
+    Creating a node no longer needs any of it. VNode.__init__ used to reach
+    through g.app.nodeIndices for a gnx; it now asks its own Outline, and
+    open_outline and new_outline hand each outline its own allocator. That was
+    the last piece of *behaviour* this class stood in for.
 
     Deliberately *not* a NullGui: a null object answers every question, so a
     view dependency that crept back in would resolve quietly instead of raising.
@@ -90,7 +89,6 @@ class _MinimalApp:
     # @+others
     # @+node:sa.20260906100000.4: *3* _MinimalApp.__init__
     def __init__(self) -> None:
-        self.nodeIndices = leoNodes.NodeIndices('leolib')
         self.debug: list[str] = []
         self.unitTesting = False
         self.silentMode = True
@@ -246,8 +244,6 @@ def ensure_app() -> None:
     if g.app is None:
         g.app = _MinimalApp()
         return  # Its dispatch tables fill themselves on first use.
-    if getattr(g.app, 'nodeIndices', None) is None:
-        g.app.nodeIndices = leoNodes.NodeIndices('leolib')
     if isinstance(g.app, _MinimalApp):
         return
     if not getattr(g.app, 'classDispatchDict', None):
@@ -261,11 +257,40 @@ def ensure_app() -> None:
         leoPluginRegistry.create_writers_data(g.app)
 
 
+# @+node:sa.20260908110000.1: ** leolib._shared_node_indices
+_node_indices: Any = None
+
+
+def _shared_node_indices() -> Any:
+    """
+    The gnx allocator leolib's outlines use, or None to share the app's.
+
+    gnxs must be unique across every outline open in a process, not merely
+    within one, because Leo copies and clones nodes between outlines. Two
+    allocators with the same user id mint the same gnx within the same second,
+    so allocators are shared per process, never per outline. That is not
+    hypothetical: giving each leolib outline a fresh allocator clashed with
+    Leo's test harness on the first run.
+
+    So: when a real Leo is hosting us, return None and let the outline use
+    g.app.nodeIndices like every other outline in that window. Standalone
+    there is no g.app to share with, and leolib keeps one of its own with the
+    same process-wide scope. Either way VNode.__init__ never has to reach for
+    g.app, which is the point.
+    """
+    global _node_indices
+    if g.app is not None and not isinstance(g.app, _MinimalApp):
+        return None  # A real Leo owns the process. Share its allocator.
+    if _node_indices is None:
+        _node_indices = leoNodes.NodeIndices('leolib')
+    return _node_indices
+
+
 # @+node:sa.20260906100000.6: ** leolib.new_outline
 def new_outline(fileName: str = '') -> Outline:
     """Create an empty outline with a single node, and no view."""
     ensure_app()
-    outline = Outline(None, fileName=fileName)
+    outline = Outline(None, fileName=fileName, nodeIndices=_shared_node_indices())
     outline.hiddenRootNode = leoNodes.VNode(context=outline, gnx='hidden-root-vnode-gnx')
     root = leoNodes.VNode(context=outline)
     root.h = 'newHeadline'
@@ -294,7 +319,7 @@ def open_outline(path: str, read_external: bool = True) -> Outline:
     path = g.finalize(path)
     if not os.path.exists(path):
         raise FileNotFoundError(path)
-    outline = Outline(None, fileName=path)
+    outline = Outline(None, fileName=path, nodeIndices=_shared_node_indices())
     outline.hiddenRootNode = leoNodes.VNode(context=outline, gnx='hidden-root-vnode-gnx')
     from leo.core import leoFileCommands
 

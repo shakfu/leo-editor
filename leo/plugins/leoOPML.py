@@ -202,7 +202,7 @@ class OpmlController:
             v = leoNodes.VNode(context=c)
             v.b, v.h = node.bodyString, node.headString
         if node.gnx:
-            ni = g.app.nodeIndices
+            ni = c.nodeIndices
             v.fileIndex = ni.tupleToString(ni.scanGnx(node.gnx))
             self.generated_gnxs[node.gnx] = v
         self.handleVnodeAttributes(node, v)

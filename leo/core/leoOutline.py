@@ -171,13 +171,22 @@ class Outline:
 
     # @+others
     # @+node:sa.20260905130000.4: *3* outline.__init__
-    def __init__(self, c: Cmdr | None, fileName: str = '', relativeFileName: str = '') -> None:
+    def __init__(
+        self,
+        c: Cmdr | None,
+        fileName: str = '',
+        relativeFileName: str = '',
+        nodeIndices: Any = None,
+    ) -> None:
         """
         Create an Outline owned by commander c, which becomes its first view.
 
         The hidden root VNode is created by the commander and assigned to
         self.hiddenRootNode, because creating it here would make leoOutline.py
         import leoNodes.py at module level.
+
+        Pass nodeIndices to give this outline its own gnx allocator. See the
+        nodeIndices property for when that is the right thing to do.
         """
         # The views attached to this outline. views[0] is the primary view.
         # May be empty: an Outline opened by leolib has no view at all until
@@ -204,6 +213,9 @@ class Outline:
         # Set around a reload; a fact about this document's files.
         self.ignoreChangedPaths = False
         self.orphan_at_file_nodes: list[str] = []
+        # This outline's gnx allocator, or None to share the app's.
+        # See the nodeIndices property.
+        self._nodeIndices: Any = nodeIndices
 
         # Model state owned by the document.
         # Assigned immediately after construction, by Commands.initObjects or
@@ -816,6 +828,41 @@ class Outline:
         settings to consult, which is the case for an outline leolib opened.
         """
         return (self.config.getString('gnx-kind') or 'none').lower()
+
+    # @+node:sa.20260908100000.1: *3* outline.nodeIndices
+    @property
+    def nodeIndices(self) -> Any:
+        """
+        This document's gnx allocator.
+
+        A gnx must be unique across every outline open in the process, not
+        merely within one: Leo copies and clones nodes between outlines, and
+        two allocators sharing a user id would mint the same gnx twice in the
+        same second. So an outline uses g.app's allocator when there is one,
+        and looks it up on each access rather than caching it, because Leo's
+        test harness replaces g.app.nodeIndices for every test.
+
+        The point of asking the *document* rather than g.app is that a caller
+        with no app can supply its own: `Outline(None, nodeIndices=...)` is
+        what lets leolib create nodes with no LeoApp in the process. That was
+        the last thing VNode.__init__ needed g.app for.
+        """
+        if self._nodeIndices is not None:
+            return self._nodeIndices
+        ni = getattr(g.app, 'nodeIndices', None)
+        if ni is not None:
+            return ni
+        # No app, or an app too young to have one. Allocate for ourselves and
+        # keep it: a fresh NodeIndices on every access would reset lastIndex
+        # and hand out the same gnx twice.
+        from leo.core import leoNodes
+
+        self._nodeIndices = leoNodes.NodeIndices(getattr(g.app, 'leoID', '') or 'leo')
+        return self._nodeIndices
+
+    @nodeIndices.setter
+    def nodeIndices(self, ni: Any) -> None:
+        self._nodeIndices = ni
 
     @property
     def atFileCommands(self) -> Any:

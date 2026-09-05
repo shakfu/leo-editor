@@ -72,9 +72,10 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 
 `leo/leolib/__init__.py` is one file that defines no model code. `Outline`,
 `VNode`, `Position`, the readers and the writers all still live in `leo/core`.
-What the file actually contributes is `_MinimalApp` — a stand-in for `g.app`
-carrying the gnx allocator, the language tables and the hook guards — plus lazy
-`@auto` dispatch tables and a seven-function API.
+What the file actually contributes is `_MinimalApp` — a stand-in for `g.app`,
+now carrying only data: the language tables, the XML prolog and the flags
+`g.doHook` and `g.es` consult — plus lazy `@auto` dispatch tables and a
+seven-function API.
 
 That was deliberate. The expensive part of this refactor was the dependency
 edges, not the file layout; moving files first would have made every later diff
@@ -91,13 +92,19 @@ functions**. The other 90% comes along for the ride.
 
 In dependency order:
 
-- [ ] **Move the gnx allocator off `g.app` and onto the `Outline`.**
-      `VNode.__init__` reaches through `g.app.nodeIndices`, and that single
-      dependency is the whole reason `_MinimalApp` has to exist — without it a
-      library cannot make a node. gnx allocation is document-level and belongs
-      on the outline. `leoNodes` has carried a comment asking for this for
-      years: *"To make VNode's independent of Leo's core, wrap all calls to the
-      VNode ctor."* Land this and most of `_MinimalApp` evaporates.
+- [x] **Move the gnx allocator off `g.app` and onto the `Outline`.** Done.
+      `VNode.__init__` now asks `self.context.nodeIndices`, so creating a node
+      needs no `g.app` at all; `Outline.nodeIndices` shares the app's allocator
+      when there is one and takes its own from the constructor when there is
+      not. This answers a request `leoNodes` had carried for years: *"To make
+      VNode's independent of Leo's core, wrap all calls to the VNode ctor."*
+      **The invariant to preserve:** allocators are shared per *process*, not
+      per outline. A gnx is `userId.timestamp.counter`, so two allocators with
+      one user id mint the same gnx inside the same second, and Leo copies
+      nodes between outlines. Giving each `leolib` outline its own collided
+      with the test harness on the first run — and reported it only as a
+      printed internal error, with every test still green.
+      `test_gnxs_do_not_collide_with_the_host` now covers it.
 - [ ] **Split `leoGlobals`.** The elephant, and the reason the boundary is not
       yet structural. Extract the ~40 functions the model needs, and have
       `leoGlobals` re-export them so nothing upstream breaks. Do it *before* the

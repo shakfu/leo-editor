@@ -1439,7 +1439,7 @@ class Undoer:
         v = new_v
 
         # All pasted nodes should have unique gnx's.
-        ni = g.app.nodeIndices
+        ni = c.nodeIndices
         for v in c.all_unique_nodes():
             ni.check_gnx(c, v.fileIndex, v)
 

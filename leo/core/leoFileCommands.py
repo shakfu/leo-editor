@@ -939,7 +939,7 @@ class FileCommands:
         self.initReadIvars()
 
         # All pasted nodes should already have unique gnx's.
-        ni = g.app.nodeIndices
+        ni = c.nodeIndices
         for v in c.all_unique_nodes():
             ni.check_gnx(c, v.fileIndex, v)
 
@@ -984,7 +984,7 @@ class FileCommands:
     # @+node:ekr.20180425034856.1: *5* fc.reassignAllIndices
     def reassignAllIndices(self, p: Position) -> None:
         """Reassign all indices in p's subtree."""
-        ni = g.app.nodeIndices
+        ni = self.outline.nodeIndices
         for p2 in p.self_and_subtree(copy=False):
             v = p2.v
             index = ni.getNewIndex(v)

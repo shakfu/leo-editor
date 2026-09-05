@@ -23,6 +23,7 @@ import tempfile
 import textwrap
 import unittest
 
+from leo.core import leoGlobals as g
 from leo.core.leoTest2 import LeoUnitTest
 # @-<< test_leolib_boundary imports >>
 
@@ -503,6 +504,34 @@ class TestLeolibApi(LeoUnitTest):
 
         with self.assertRaises(ValueError):
             leolib.save(leolib.new_outline())
+
+    # @+node:sa.20260908120000.1: *3* TestLeolibApi.test_gnxs_do_not_collide_with_the_host
+    def test_gnxs_do_not_collide_with_the_host(self):
+        """
+        An outline leolib opens inside a running Leo must share its allocator.
+
+        gnxs have to be unique across every outline in a process, because Leo
+        copies and clones nodes between them. A gnx is
+        `userId.timestamp.counter`, so two allocators with one user id hand out
+        the same gnx twice within the same second -- and a fresh allocator
+        starts its counter at 1, which is where the host's already is.
+
+        This is a regression test with a story: moving the allocator off g.app
+        first gave each leolib outline its own, and this collided with the test
+        harness's on the first run. It reported itself only as a printed
+        internal error, so every test still passed. Hence an explicit check.
+        """
+        from leo import leolib
+
+        c = self.c
+        host_gnxs = {v.gnx for v in c.all_unique_nodes()}
+        # The outline leolib opens must mint gnxs the host has never used.
+        outline = leolib.new_outline()
+        self.assertIs(outline.nodeIndices, g.app.nodeIndices)
+        new_gnxs = {outline.hiddenRootNode.insertAsLastChild().gnx for _ in range(20)}
+        self.assertEqual(len(new_gnxs), 20, 'leolib minted a gnx twice')
+        clashes = host_gnxs & new_gnxs
+        self.assertFalse(clashes, f"leolib reused the host's gnxs: {sorted(clashes)}")
 
     # @-others
 

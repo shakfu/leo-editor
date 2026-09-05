@@ -232,7 +232,7 @@ def pasteAsTemplate(self: Cmdr, event: LeoKeyEvent | None = None) -> None:
         """
         if gnx in outside:
             return gnx
-        return g.app.nodeIndices.computeNewIndex()
+        return c.nodeIndices.computeNewIndex()
 
     # @+node:vitalije.20200529115141.1: *4* viter
     def viter(parent_gnx: str, xv: Any) -> Generator[tuple[str, str, str | None, str], None, None]:
