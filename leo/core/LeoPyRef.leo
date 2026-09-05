@@ -131,6 +131,10 @@
 <v t="ekr.20190515070742.1"><vh>@file leoMarkup.py</vh></v>
 <v t="ekr.20031218072017.3320"><vh>@file leoNodes.py</vh></v>
 <v t="sa.20260905130000.1"><vh>@file leoOutline.py</vh></v>
+<v t="sa.20260905210000.1"><vh>@file ../tui/__init__.py</vh></v>
+<v t="sa.20260905210100.1"><vh>@file ../tui/model.py</vh></v>
+<v t="sa.20260905210200.1"><vh>@file ../tui/screen.py</vh></v>
+<v t="sa.20260905210300.1"><vh>@file ../tui/__main__.py</vh></v>
 <v t="ekr.20140821055201.18331"><vh>@file leoPersistence.py</vh></v>
 <v t="ekr.20031218072017.3439"><vh>@file leoPlugins.py</vh></v>
 <v t="ekr.20150419124739.1"><vh>@file leoPrinting.py</vh></v>
@@ -579,6 +583,7 @@
 <v t="ekr.20210903155556.1"><vh>@file ../unittests/core/test_leoKeys.py</vh></v>
 <v t="ekr.20201203042030.1"><vh>@file ../unittests/core/test_leoNodes.py</vh></v>
 <v t="sa.20260905150000.1"><vh>@file ../unittests/core/test_leoOutline.py</vh></v>
+<v t="sa.20260905210400.1"><vh>@file ../unittests/misc_tests/test_tui.py</vh></v>
 <v t="ekr.20210908171733.1"><vh>@file ../unittests/core/test_leoPersistence.py</vh></v>
 <v t="ekr.20220911163718.1"><vh>@file ../unittests/core/test_leoQt6.py</vh></v>
 <v t="ekr.20210902055206.1"><vh>@file ../unittests/core/test_leoRst.py</vh></v>
