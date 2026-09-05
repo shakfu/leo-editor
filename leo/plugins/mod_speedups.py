@@ -11,6 +11,7 @@ If stuff breaks, disable this plugin before reporting bugs.
 # By VMV.
 import os.path
 from leo.core import leoGlobals as g
+from leo.leolib import util
 
 
 # @+others
@@ -21,12 +22,20 @@ def init():
 
 
 # @+node:ville.20090804155017.12332: ** os.path shortcuts
-g.os_path_basename = os.path.basename
-g.os_path_split = os.path.split
-g.os_path_splitext = os.path.splitext
-g.os_path_abspath = os.path.abspath
-g.os_path_normpath = os.path.normpath
-g.os_path_exists = os.path.exists
+# Patch both modules. These functions live in leo.leolib.util and leoGlobals
+# re-exports them, so the two names are separate bindings to one function:
+# rebinding only g.<name> would leave util's own callers on the slow path, and
+# rebinding only util's would leave every g.<name> caller there.
+for _name, _fast in (
+    ('os_path_basename', os.path.basename),
+    ('os_path_split', os.path.split),
+    ('os_path_splitext', os.path.splitext),
+    ('os_path_abspath', os.path.abspath),
+    ('os_path_normpath', os.path.normpath),
+    ('os_path_exists', os.path.exists),
+):
+    setattr(g, _name, _fast)
+    setattr(util, _name, _fast)
 
 
 # @+node:ville.20090804155017.12333: ** os_path_finalize caching (mod_speedups.py)
@@ -71,8 +80,8 @@ def os_path_join_speedup(*args, **kw):
     return path
 
 
-g.finalize = os_path_finalize_cached
-g.finalize_join = os_path_finalize_join_cached
+g.finalize = util.finalize = os_path_finalize_cached
+g.finalize_join = util.finalize_join = os_path_finalize_join_cached
 # g.os_path_expanduser = os_path_expanduser_cached
 
 # @-others

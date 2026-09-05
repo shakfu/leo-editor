@@ -27,6 +27,9 @@ __init__ empty of imports is what makes the layering possible at all.
 import importlib
 from typing import Any
 
+# The package's own modules. See __getattr__.
+_SUBMODULES = ('api', 'state', 'util')
+
 __all__ = [
     'Outline',
     'ensure_app',
@@ -50,7 +53,12 @@ def __getattr__(name: str) -> Any:
     package for an attribute named 'api', which lands back here and recurses
     until the stack runs out.
     """
-    if name.startswith('_') or name == 'api':
+    # Never answer for a submodule. `from leo.leolib import state` asks the
+    # package for the attribute first, and answering it by importing api would
+    # drag leoGlobals in -- which imports util, which is what asked. That is a
+    # circular import, and it fails at the least helpful moment: partway
+    # through building util.
+    if name.startswith('_') or name in _SUBMODULES:
         raise AttributeError(name)
     api = importlib.import_module('leo.leolib.api')
     try:

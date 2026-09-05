@@ -29,7 +29,8 @@ is app-dependent for a reason, and needs a seam rather than a move.
 # @+<< leolib.util: imports >>
 # @+node:sa.20260908140000.2: ** << leolib.util: imports >>
 from __future__ import annotations
-from collections.abc import Callable, Sequence
+import binascii
+from collections.abc import Callable, Iterable, Sequence
 import codecs
 from functools import reduce
 import gc
@@ -48,12 +49,16 @@ import time
 import traceback
 import types
 from typing import Any, TYPE_CHECKING
+import gettext
 import urllib
 import urllib.parse as urlparse
+
+from leo.leolib import state
 
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
     from leo.core.leoNodes import Position, VNode
+    from leo.core.leoOutline import Outline
 
     Args = Any
     KWargs = Any
@@ -2702,6 +2707,804 @@ def getUNLFilePart(s: str) -> str:
 
 # @+node:sa.20260908140000.219: *3* util.path_data_pattern
 path_data_pattern = re.compile(r'(.+?):\s*(.+)')
+
+
+# @+node:sa.20260908170000.1: ** util.Logging & Printing
+# Leo's reporting functions. Only one of them needs something a library
+# does not have -- es writes to a log pane, which belongs to a window --
+# and that one asks state.log_sink rather than the application.
+# @+node:sa.20260908170000.2: *3* util._console_encoding
+# The console's encoding, worked out once by translateArgs below. Private, and
+# named so: it is rebound at run time, which is the one thing a name in this
+# module must not be if anything outside reads it. Nothing does.
+_console_encoding: str = ''
+
+
+# @+node:sa.20260908170000.3: *3* util._error_color
+def _error_color() -> str:
+    """
+    The colour Leo shows errors in.
+
+    Leo reads it from the outline's settings, which a library has none of, so
+    without a host the answer is Leo's own fallback.
+    """
+    hook = state.error_color_hook
+    return (hook() if hook is not None else None) or 'red'
+
+
+# @+node:sa.20260908170000.4: *3* util.es
+def es(*args: Args, **kwargs: KWargs) -> None:
+    """
+    Put all non-keyword args to the log pane, if a host installed one.
+
+    A log pane belongs to a window, so the model cannot write to one directly.
+    leoGlobals installs Leo's log writer in state.log_sink as it loads, so
+    inside Leo this behaves exactly as it always did. With no host the sink is
+    None and this does nothing -- which is what leolib already did in effect:
+    its minimal app has no gui and no log, so every message ended up on a list
+    nobody read.
+
+    Supports the color, comma, newline, spaces, tabName and nodeLink keyword
+    arguments; the sink interprets them.
+    """
+    sink = state.log_sink
+    if sink is not None:
+        sink(*args, **kwargs)
+
+
+# @+node:sa.20260908170000.5: *3* util.pr
+def pr(*args: Args, **kwargs: KWargs) -> None:
+    """
+    Print all non-keyword args. This is a wrapper for the print statement.
+
+    The first, third, fifth, etc. arg translated by translateString.
+    Supports color, comma, newline, spaces and tabName keyword arguments.
+    """
+    # Compute the effective args.
+    d = {'commas': False, 'newline': True, 'spaces': True}
+    d = doKeywordArgs(kwargs, d)
+    newline = d.get('newline')
+    # Unit tests require sys.stdout.
+    stdout = sys.stdout if sys.stdout and state.unitTesting else sys.__stdout__
+    if not stdout:
+        # #541.
+        return
+    if isWindows:
+        encoding = 'ascii'  # 2011/11/9.
+    elif getattr(stdout, 'encoding', None):
+        # sys.stdout is a TextIOWrapper with a particular encoding.
+        encoding = stdout.encoding
+    else:
+        encoding = 'utf-8'
+    s = translateArgs(args, d)  # Translates everything to unicode.
+    s = toUnicode(s, encoding=encoding, reportErrors=False)
+    if newline:
+        s += '\n'
+    # Python's print statement *can* handle unicode, but
+    # sitecustomize.py must have sys.setdefaultencoding('utf-8')
+    try:
+        # #783: print-* commands fail under pythonw.
+        stdout.write(s)
+    except Exception:
+        pass
+
+
+# @+node:sa.20260908170000.6: *3* util.trace
+def trace(*args: Args, **kwargs: KWargs) -> None:
+    """Print the name of the calling function followed by all the args."""
+    name = _callerName(2)
+    if name.endswith(".pyc"):
+        name = name[:-1]
+    pr(name, *args)
+
+
+# @+node:sa.20260908170000.7: *3* util.callers
+def callers(n: int = 4) -> str:
+    """
+    Return a string containing a comma-separated list of the calling
+    function's callers.
+    """
+    # Be careful to call _callerName with smaller values of i first:
+    # sys._getframe throws ValueError if there are less than i entries.
+    i, result = 3, []
+    while 1:
+        if s := _callerName(n=i):
+            result.append(s)
+        if not s or len(result) >= n:
+            break
+        i += 1
+    return ','.join(reversed(result))
+
+
+# @+node:sa.20260908170000.8: *3* util._callerName
+def _callerName(n: int) -> str:
+    """Return the name of the caller n levels back in the call stack."""
+    try:
+        # Get the function name from the call stack.
+        f1 = sys._getframe(n)  # The stack frame, n levels up.
+        code1 = f1.f_code  # The code object
+        locals_ = f1.f_locals  # The local namespace.
+        name = code1.co_name
+        # sfn = shortFilename(code1.co_filename)  # The file name.
+        # line = code1.co_firstlineno
+        obj = locals_.get('self')
+        if obj and name == '__init__':
+            return f"{obj.__class__.__name__}.{name}"
+        return name
+    except ValueError:
+        # The stack is not deep enough OR
+        # sys._getframe does not exist on this platform.
+        return ''
+    except Exception:
+        es_exception()
+        return ''  # "<no caller name>"
+
+
+# @+node:sa.20260908170000.9: *3* util.es_print
+def es_print(*args: Args, **kwargs: KWargs) -> None:
+    """
+    Print all non-keyword args, and put them to the log pane.
+
+    The first, third, fifth, etc. arg translated by translateString.
+    Supports color, comma, newline, spaces and tabName keyword arguments.
+    """
+    pr(*args, **kwargs)
+    if not state.unitTesting:
+        es(*args, **kwargs)
+
+
+# @+node:sa.20260908170000.10: *3* util.error
+def error(*args: Args, **kwargs: KWargs) -> None:
+    kwargs['color'] = 'error'
+    es_print(*args, **kwargs)
+
+
+# @+node:sa.20260908170000.11: *3* util.warning
+def warning(*args: Args, **kwargs: KWargs) -> None:
+    kwargs['color'] = 'warning'
+    es_print(*args, **kwargs)
+
+
+# @+node:sa.20260908170000.12: *3* util.red
+def red(*args: Args, **kwargs: KWargs) -> None:
+    kwargs['color'] = 'red'
+    es_print(*args, **kwargs)
+
+
+# @+node:sa.20260908170000.13: *3* util.blue
+def blue(*args: Args, **kwargs: Any) -> None:
+    kwargs['color'] = 'blue'
+    es_print(*args, **kwargs)
+
+
+# @+node:sa.20260908170000.14: *3* util.es_error
+def es_error(*args: Args, **kwargs: KWargs) -> None:
+    color = kwargs.get('color')
+    if not color:
+        kwargs['color'] = _error_color()
+    es(*args, **kwargs)
+
+
+# @+node:sa.20260908170000.15: *3* util.es_print_error
+def es_print_error(*args: Args, **kwargs: KWargs) -> None:
+    color = kwargs.get('color')
+    if not color:
+        kwargs['color'] = _error_color()
+    es_print(*args, **kwargs)
+
+
+# @+node:sa.20260908170000.16: *3* util.es_exception
+def es_exception(*args: Sequence, **kwargs: Sequence) -> None:
+    """Print the last exception."""
+    # val is the second argument to the raise statement.
+    typ, val, tb = sys.exc_info()
+    for line in traceback.format_exception(typ, val, tb):
+        es_print_error(line)
+
+
+# @+node:sa.20260908170000.17: *3* util.internalError
+def internalError(*args: Args) -> None:
+    """Report a serious internal error in Leo."""
+    stack = callers(20).split(',')
+    caller = stack[-1]
+    error('\nInternal Leo error in', caller)
+    es_print(*args)
+    es_print('Called from', ', '.join(stack[:-1]))
+    es_print('Please report this error to Leo\'s developers', color='red')
+
+
+# @+node:sa.20260908170000.18: *3* util.printObj
+def printObj(obj: object, *, tag: str = '', indent: int = 0, offset: int = 0) -> None:
+    """Pretty print any Python object using pr."""
+    pr(objToString(obj, indent=indent, tag=tag, offset=offset))
+
+
+# @+node:sa.20260908170000.19: *3* util.es_print_unique_message
+def es_print_unique_message(message: str, *, color: str = 'error') -> bool:
+    """
+    Print the given message once. Return True if the message was printed.
+    """
+    if message not in g_unique_message_d:
+        g_unique_message_d[message] = True
+        es_print(message, color=color)
+        return True
+    return False
+
+
+# @+node:sa.20260908170000.20: *3* util.toUnicode
+def toUnicode(s: bytes | str, encoding: str = '', reportErrors: bool = False) -> str:
+    """Convert bytes to unicode if necessary."""
+    tag = 'toUnicode'
+    if isinstance(s, str):
+        return s
+    if isinstance(s, bytes):
+        if not encoding:
+            encoding = 'utf-8'
+        try:
+            return s.decode(encoding, 'strict')
+        except (UnicodeDecodeError, UnicodeError) as e:
+            if reportErrors:
+                trace(f"{tag} {e}! {encoding=} {s=}\n{callers()=}")
+            return s.decode(encoding, 'replace')
+    raise ValueError(f"{tag}: {s=}\n{callers()=}")
+
+
+# @+node:sa.20260908170000.21: *3* util.shortFileName
+def shortFileName(fileName: str, n: int | None = None) -> str:
+    """Return the base name of a path."""
+    if n is not None:
+        trace('"n" keyword argument is no longer used')
+    return os_path_basename(fileName) if fileName else ''
+
+
+# @+node:sa.20260908170000.22: *3* util.translateArgs
+def translateArgs(args: Iterable, d: dict[str, Value]) -> str:
+    """
+    Return the concatenation of s and all args, with odd args translated.
+    """
+    global _console_encoding
+    if not _console_encoding:
+        e = sys.getdefaultencoding()
+        _console_encoding = e if isValidEncoding(e) else 'utf-8'
+    result: list[str] = []
+    n, spaces = 0, d.get('spaces')
+    for arg in args:
+        n += 1
+        # First, convert to unicode.
+        if isinstance(arg, str):
+            arg = toUnicode(arg, _console_encoding)
+        # Now translate.
+        if not isinstance(arg, str):
+            arg = repr(arg)
+        elif (n % 2) == 1:
+            arg = translateString(arg)
+        else:
+            pass  # The arg is an untranslated string.
+        if arg:
+            if result and spaces:
+                result.append(' ')
+            result.append(arg)
+    return ''.join(result)
+
+
+# @+node:sa.20260908170000.23: *3* util.translateString
+def translateString(s: str) -> str:
+    """Return the translated text of s."""
+    if not isinstance(s, str):
+        s = str(s, 'utf-8')
+    if state.translate_to_upper_case:
+        s = s.upper()
+    else:
+        s = gettext.gettext(s)
+    return s
+
+
+# @+node:sa.20260908170000.24: *3* util.isValidEncoding
+def isValidEncoding(encoding: str) -> bool:
+    """Return True if the encoding is valid."""
+    if not encoding:
+        return False
+    if sys.platform == 'cli':
+        return True
+    try:
+        codecs.lookup(encoding)
+        return True
+    except LookupError:  # Windows
+        return False
+    except AttributeError:  # Linux
+        return False
+    except Exception:
+        # UnicodeEncodeError
+        es_print('Please report the following error')
+        es_exception()
+        return False
+
+
+# @+node:sa.20260908170000.25: *3* util.getPythonEncodingFromString
+def getPythonEncodingFromString(s: bytes | str) -> str:
+    """Return the encoding given by Python's encoding line.
+    s is the entire file.
+    """
+    encoding = 'utf-8'
+    tag, tag2 = '# -*- coding:', '-*-'
+    n1, n2 = len(tag), len(tag2)
+    if not isinstance(s, (bytes, str)):
+        raise ValueError(f"{tag}: {s=}\n{callers()=}")
+    if not s:
+        return encoding
+
+    # Convert to unicode before calling startswith.
+    # The encoding doesn't matter: we only look at the first line, and if
+    # the first line is an encoding line, it will contain only ascii characters.
+    s = toUnicode(s)  # Bug fix: 2025/03/24: do *not* force ascii encoding.
+    lines = splitLines(s)
+    line1 = lines[0].strip()
+    if line1.startswith(tag) and line1.endswith(tag2):
+        e = line1[n1:-n2].strip()
+        if e and isValidEncoding(e):
+            encoding = e
+    elif match_word(line1, 0, '@first'):
+        line1 = line1[len('@first') :].strip()
+        if line1.startswith(tag) and line1.endswith(tag2):
+            e = line1[n1:-n2].strip()
+            if e and isValidEncoding(e):
+                encoding = e
+    return encoding
+
+
+# @+node:sa.20260908180000.1: ** util.Debugging, GC, Stats & Timing (moved later)
+# @+node:sa.20260908180000.2: *3* util.caller
+def caller(i: int = 1) -> str:
+    """Return the caller name i levels up the stack."""
+    return callers(i + 1).split(',')[0]
+
+
+# @+node:sa.20260908180000.3: *3* util.checkUnchangedIvars
+def checkUnchangedIvars(
+    obj: object,
+    d: dict[str, Value],
+    exceptions: Sequence[str] | None = None,
+) -> bool:
+    if not exceptions:
+        exceptions = []
+    ok = True
+    for key in d:
+        if key not in exceptions:
+            if getattr(obj, key) != d.get(key):
+                trace(
+                    f"changed ivar: {key} "
+                    f"old: {repr(d.get(key))} "
+                    f"new: {repr(getattr(obj, key))}"
+                )  # fmt: skip
+                ok = False
+    return ok
+
+
+# @+node:sa.20260908180000.4: *3* util.printDict
+printDict = printObj
+
+
+# @+node:sa.20260908180000.5: ** util.Directives (moved later)
+# @+node:sa.20260908180000.6: *3* util.set_delims_from_string
+def set_delims_from_string(s: str) -> tuple[str, str, str]:
+    """
+    Return (delim1, delim2, delim2), the delims following the @comment
+    directive.
+
+    This code can be called from @language logic, in which case s can
+    point at @comment
+    """
+    # Skip an optional @comment
+    tag = "@comment"
+    fail = '', '', ''
+    i = 0
+    if match_word(s, i, tag):
+        i += len(tag)
+    count = 0
+    delims = ['', '', '']
+    while count < 3 and i < len(s):
+        i = j = skip_ws(s, i)
+        while i < len(s) and not is_ws(s[i]) and not is_nl(s, i):
+            i += 1
+        if j == i:
+            break
+        delims[count] = s[j:i] or ''
+        count += 1
+    # 'rr 09/25/02
+    if count == 2:  # delims[0] is always the single-line delim.
+        delims[2] = delims[1]
+        delims[1] = delims[0]
+        delims[0] = ''
+    for i in range(3):
+        if delims[i]:
+            if delims[i].startswith("@0x"):
+                # Allow delimiter definition as @0x + hexadecimal encoded delimiter
+                # to avoid problems with duplicate delimiters on the @comment line.
+                # If used, whole delimiter must be encoded.
+                if len(delims[i]) == 3:
+                    warning(f"'{delims[i]}' delimiter is invalid")
+                    return fail
+                try:
+                    delims[i] = toUnicode(binascii.unhexlify(delims[i][3:]))  # #4753
+                except Exception as e:
+                    warning(f"'{delims[i]}' delimiter is invalid: {e}")
+                    return fail
+            else:
+                # 7/8/02: The "REM hack": replace underscores by blanks.
+                # 9/25/02: The "perlpod hack": replace double underscores by newlines.
+                delims[i] = delims[i].replace("__", '\n').replace('_', ' ')
+    return delims[0], delims[1], delims[2]
+
+
+# @+node:sa.20260908180000.7: ** util.Files & Directories (moved later)
+# @+node:sa.20260908180000.8: *3* util.chdir
+def chdir(path: str) -> None:
+    """Change current directory to the directory corresponding to path."""
+    if state.unitTesting:
+        return  # Don't change the global environment in unit tests!
+    if not os_path_isdir(path):
+        path = os_path_dirname(path)
+    if os_path_isdir(path) and os_path_exists(path):
+        os.chdir(path)
+
+
+# @+node:sa.20260908180000.9: *3* util.makeAllNonExistentDirectories
+def makeAllNonExistentDirectories(theDir: str) -> str:
+    """
+    A wrapper from os.makedirs.
+    Attempt to make all non-existent directories.
+
+    Return True if the directory exists or was created successfully.
+    """
+    # Return True if the directory already exists.
+    theDir = os_path_normpath(theDir)
+    if os_path_isdir(theDir) and os_path_exists(theDir):
+        return theDir
+    # #1450: Create the directory with os.makedirs.
+    try:
+        os.makedirs(theDir, mode=0o777, exist_ok=False)
+        return theDir
+    except Exception:
+        return ''
+
+
+# @+node:sa.20260908180000.10: *3* util.readFileIntoString
+def readFileIntoString(
+    fileName: str,
+    encoding: str = 'utf-8',  # BOM may override this.
+    kind: str = '',  # @file, @edit, ...
+    verbose: bool = True,
+) -> tuple[str | None, str]:
+    """
+    Return the contents of the file whose full path is fileName.
+
+    Return (s,e)
+    s is the string, converted to unicode, or None if there was an error.
+    e is the encoding of s, computed in the following order:
+    - The BOM encoding if the file starts with a BOM mark.
+    - The encoding given in the # -*- coding: utf-8 -*- line for python files.
+    - The encoding given by the 'encoding' keyword arg.
+    - None, which typically means 'utf-8'.
+    """
+    fail = None, ''
+    if not fileName:
+        if verbose:
+            trace('no fileName arg given')
+        return fail
+    if os_path_isdir(fileName):
+        if verbose:
+            trace('not a file:', fileName)
+        return fail
+    if not os_path_exists(fileName):
+        if verbose:
+            error('file not found:', fileName)
+        return fail
+    try:
+        e = ''
+        with open(fileName, 'rb') as f:
+            bytes_s = f.read()
+        # Fix #391.
+        if not bytes_s:
+            return fail
+        # New in Leo 4.11: check for unicode BOM first.
+        e, bytes_s = stripBOM(bytes_s)
+        if not e:
+            # Python's encoding comments override everything else.
+            _, ext = os_path_splitext(fileName)
+            if ext == '.py':
+                e = getPythonEncodingFromString(bytes_s)
+        s = toUnicode(bytes_s, encoding=e or encoding)
+        return s, e
+    except OSError:
+        # Translate 'can not open' and kind, but not fileName.
+        if verbose:
+            error('can not open', '', (kind or ''), fileName)
+    except Exception:
+        error(f"readFileIntoString: exception reading {fileName}")
+        es_exception()
+    return fail
+
+
+# @+node:sa.20260908180000.11: *3* util.readFileIntoUnicodeString
+def readFileIntoUnicodeString(fn: str, encoding: str = '', silent: bool = False) -> str:
+    """Return the raw contents of the file whose full path is fn."""
+    try:
+        with open(fn, 'rb') as f:
+            s = f.read()
+        return toUnicode(s, encoding=encoding)
+    except OSError:
+        if not silent:
+            error('can not open', fn)
+    except Exception:
+        error(f"readFileIntoUnicodeString: unexpected exception reading {fn}")
+        es_exception()
+    return ''
+
+
+# @+node:sa.20260908180000.12: *3* util.relativeDirectory
+def relativeDirectory(baseDir: str, path: str) -> str:
+    """
+    'path' should be an absolute path.
+    Return 'path' relative to the base directory.
+    Return 'path' if 'baseDir' is not an ancestor of 'path'.
+    """
+
+    def oops(message: str) -> None:
+        if not state.unitTesting:
+            es_print(f"relativeDirectory: {message}")
+
+    if not path:
+        oops(f"{path!r} should be an absolute path")
+        return path
+
+    if not baseDir:
+        # Likely an unsaved outline.
+        if not state.unitTesting:
+            es_print_unique_message('Save this outline to use relative import paths')
+        return path
+
+    if isWindows:
+        baseDir = baseDir.lower()
+        path = path.lower()
+    try:
+        if rel_path := os.path.relpath(path, start=baseDir):
+            return rel_path
+    except ValueError:
+        # Windows throws ValueError if the drives are different.
+        oops(f"{baseDir} and {path} are on different drives")
+    return path
+
+
+# @+node:sa.20260908180000.13: *3* util.shortFilename
+shortFilename = shortFileName
+
+
+# @+node:sa.20260908180000.14: *3* util.writeFile
+def writeFile(contents: bytes | str, encoding: str, fileName: str) -> bool:
+    """Create a file with the given contents."""
+    try:
+        bytes_contents = (  # #4753
+            contents if isinstance(contents, bytes)
+            else toEncodedString(contents, encoding=encoding)
+        )  # fmt: skip
+        with open(fileName, 'wb') as f:
+            f.write(bytes_contents)
+        return True
+    except Exception as e:
+        print(f"exception writing: {fileName}:\n{e}")
+        return False
+
+
+# @+node:sa.20260908180000.15: ** util.Finding & Scanning (moved later)
+# @+node:sa.20260908180000.16: *3* util.skip_id
+def skip_id(s: str, i: int, chars: str = '') -> int:
+    chars = toUnicode(chars) if chars else ''
+    n = len(s)
+    while i < n and (isWordChar(s[i]) or s[i] in chars):
+        i += 1
+    return i
+
+
+# @+node:sa.20260908180000.17: ** util.Indices, Strings, Unicode & Whitespace (moved later)
+# @+node:sa.20260908180000.18: *3* util.toEncodedString
+def toEncodedString(s: bytes | str, encoding: str = '', reportErrors: bool = False) -> bytes:
+    """Convert unicode string to an encoded string."""
+    tag = 'toEncodedString'
+    if isinstance(s, bytes):
+        return s
+    if isinstance(s, str):
+        if not encoding:
+            encoding = 'utf-8'
+        try:
+            return s.encode(encoding, "strict")
+        except UnicodeError as e:
+            if reportErrors:
+                error(f"{tag} {e}! {encoding=} {s=}\n{callers()=}")
+            return s.encode(encoding, "replace")
+    raise ValueError(f"{tag}: {s=} {callers()=}")
+
+
+# @+node:sa.20260908180000.19: ** util.Logging & Printing (moved later)
+# @+node:sa.20260908180000.20: *3* util.tr
+tr = translateString
+
+
+# @+node:sa.20260908180000.21: ** util.Miscellaneous (moved later)
+# @+node:sa.20260908180000.22: *3* util._context
+def _context(n: int = 1) -> str:
+    """Return the full context of the function/method n levels up the stack frame."""
+    # Similar to _callerName.
+    try:
+        f1 = sys._getframe(n)  # The stack frame, n levels up.
+        code1 = f1.f_code  # The code object
+        locals_ = f1.f_locals  # The local namespace.
+        module = shortFilename(code1.co_filename)  # The module's file name.
+        if module == 'leoGlobals.py':
+            module = 'g'
+        obj = locals_.get('self')
+        if obj is None:
+            context = module
+        else:
+            try:
+                class_name = obj.__class__.__name__
+                if class_name == 'Commands':
+                    class_name = 'c'
+                context = f"{module}:{class_name}"
+            except Exception:
+                context = module
+    except Exception:
+        context = '<unknown context>:'
+    return context
+
+
+# @+node:sa.20260908180000.23: *3* util.deprecated
+def deprecated() -> None:
+    """Issue a single deprecation message for the caller of this method."""
+    message = f"Warning: {_context(2)}.{caller()} is deprecated"
+    if state.unitTesting:
+        message = '\n' + message
+    if print_unique_message(message):
+        print(callers(6))
+        print('')
+
+
+# @+node:sa.20260908180000.24: ** util.os_path_ Wrappers (moved later)
+# @+node:sa.20260908180000.25: *3* util.finalize
+def finalize(path: str) -> str:
+    """
+    Finalize the path. Do not call os.path.realpath.
+
+    - Call os.path.expanduser and  os.path.expandvars.
+    - Convert to an absolute path, relative to os.getwd().
+    - On Windows, convert backslashes to forward slashes.
+    """
+    if not path:
+        return ''
+    path = os.path.expanduser(path)
+    path = os.path.expandvars(path)
+
+    # Convert to an absolute path, similar to os.path.normpath(os.getcwd(), path)
+    path = os.path.abspath(path)
+    path = os.path.normpath(path)
+
+    # Convert backslashes to forward slashes, regardless of platform.
+    path = os_path_normslashes(path)
+    return path
+
+
+# @+node:sa.20260908180000.26: *3* util.finalize_join
+def finalize_join(*args: Args) -> str:
+    """
+    Join and finalize. Do not call os.path.realpath.
+
+    - Return an empty string if all of the args are empty.
+    - Call os.path.expanduser and  os.path.expandvars for each arg.
+    - Call os.path.join on the resulting list of expanded arguments.
+    - Convert to an absolute path, relative to os.getwd().
+    - On Windows, convert backslashes to forward slashes.
+    """
+    uargs = [z for z in args if z]
+    if not uargs:
+        return ''
+    # Expand everything before joining.
+    uargs2 = [os.path.expandvars(os.path.expanduser(z)) for z in uargs]
+
+    # Join the paths.
+    path = os.path.join(*uargs2)
+
+    # Convert to an absolute path, similar to os.path.normpath(os.getcwd(), path)
+    path = os.path.abspath(path)
+    path = os.path.normpath(path)
+
+    # Convert backslashes to forward slashes, regardless of platform.
+    path = os_path_normslashes(path)
+    return path
+
+
+# @+node:sa.20260908180000.27: *3* util.os_path_abspath
+def os_path_abspath(path: str) -> str:
+    """Convert a path to an absolute path."""
+    if not path:
+        return ''
+    path = os.path.abspath(path)
+    path = os_path_normslashes(path)
+    return path
+
+
+# @+node:sa.20260908180000.28: *3* util.os_path_basename
+def os_path_basename(path: str) -> str:
+    """Return the second half of the pair returned by split(path)."""
+    if not path:
+        return ''
+    path = os.path.basename(path)
+    path = os_path_normslashes(path)
+    return path
+
+
+# @+node:sa.20260908180000.29: *3* util.os_path_exists
+def os_path_exists(path: str) -> bool:
+    """Return True if path exists."""
+    return os.path.exists(path) if path else False
+
+
+# @+node:sa.20260908180000.30: *3* util.os_path_normpath
+def os_path_normpath(path: str) -> str:
+    """Normalize the path."""
+    if not path:
+        return ''
+    path = os.path.normpath(path)
+    path = os_path_normslashes(path)
+    return path
+
+
+# @+node:sa.20260908180000.31: *3* util.os_path_split
+def os_path_split(path: str) -> tuple[str, str]:
+    if not path:
+        return '', ''
+    head, tail = os.path.split(path)
+    return head, tail
+
+
+# @+node:sa.20260908180000.32: *3* util.os_path_splitext
+def os_path_splitext(path: str) -> tuple[str, str]:
+    if not path:
+        return '', ''
+    head, tail = os.path.splitext(path)
+    return head, tail
+
+
+# @+node:sa.20260908180000.33: ** util.Scripting (moved later)
+# @+node:sa.20260908180000.34: *3* util.extractExecutableString
+def extractExecutableString(c: Outline | Cmdr, p: Position, s: str) -> str:
+    """
+    Return all lines for the given @language directive.
+
+    Ignore all lines under control of any other @language directive.
+    """
+    # Rewritten to fix #1071.
+    if state.unitTesting:
+        return s  # Regrettable, but necessary.
+
+    # Return s if no @language in effect. Should never happen.
+    language = c.getLanguage(p)
+    if not language:
+        return s
+
+    # Return s if @language is unambiguous.
+    pattern = r'^@language\s+(\w+)'
+    matches = list(re.finditer(pattern, s, re.MULTILINE))
+    if len(matches) < 2:
+        return s
+
+    # Scan the lines, extracting only the valid lines.
+    extracting = False
+    result: list[str] = []
+    for line in splitLines(s):
+        if m := re.match(pattern, line):
+            extracting = m.group(1) == language
+        elif extracting:
+            result.append(line)
+    return ''.join(result)
 
 
 # @-others

@@ -14,6 +14,7 @@ these tests.
 # @+node:sa.20260908150000.2: ** << test_leolib_util imports >>
 import ast
 import os
+import pathlib
 import subprocess
 import sys
 import textwrap
@@ -61,12 +62,14 @@ class TestLeolibUtil(unittest.TestCase):
     # @+node:sa.20260908150000.5: *3* TestLeolibUtil.test_util_imports_no_leo_module
     def test_util_imports_no_leo_module(self):
         """
-        Importing util must pull in no Leo module at all.
+        Importing util must pull in nothing from Leo but leolib.state.
 
-        leoGlobals imports util, so the reverse would be a cycle -- and the
-        point of the split is that the arrow only points one way. A subprocess,
-        because any other test in this process has already imported half of
-        Leo.
+        leoGlobals imports util, so anything util imported back would be a
+        cycle -- and the point of the split is that the arrow points one way.
+        state is the single exception, and it earns it by importing nothing
+        itself: it exists precisely so that util can read Leo's mutable flags
+        without reaching for leoGlobals. A subprocess, because any other test
+        in this process has already imported half of Leo.
         """
         out = subprocess.run(
             [
@@ -88,7 +91,11 @@ class TestLeolibUtil(unittest.TestCase):
         )
         self.assertEqual(out.returncode, 0, out.stderr)
         loaded = eval(out.stdout.strip())  # noqa: S307
-        self.assertEqual(loaded, ['leo.leolib.util'], f"util dragged in Leo modules: {loaded}")
+        self.assertEqual(
+            loaded,
+            ['leo.leolib.state', 'leo.leolib.util'],
+            f"util dragged in Leo modules: {loaded}",
+        )
 
     # @+node:sa.20260908150000.6: *3* TestLeolibUtil.test_leoGlobals_reexports_every_name
     def test_leoGlobals_reexports_every_name(self):
@@ -146,6 +153,37 @@ class TestLeolibUtil(unittest.TestCase):
             self.assertFalse(
                 hasattr(util, name), f"{name} is rebound at run time and cannot live in util"
             )
+
+    # @+node:sa.20260908190000.2: *3* TestLeolibUtil.test_runtime_patches_hit_both_modules
+    def test_runtime_patches_hit_both_modules(self):
+        """
+        Anything that rebinds g.<name> at run time must rebind util.<name> too.
+
+        Three places in Leo swap a function out while it runs: leoApp redirects
+        stdout under pythonw, leoserver redirects the log to its client, and
+        mod_speedups substitutes faster path helpers. leoGlobals re-exports
+        util, so g.<name> and util.<name> are two bindings to one function --
+        and patching only the first leaves util's own callers on the original.
+        For g.es_print that means error, warning and internalError go on
+        writing where the patch was meant to stop them.
+
+        Checked by reading the source, because the failure is invisible at run
+        time: everything keeps working, just not where the caller intended.
+        """
+        import re
+
+        from leo.leolib import util
+
+        names = {n for n in dir(util) if not n.startswith('_')}
+        offenders = []
+        for path in sorted(pathlib.Path(os.path.join(REPO, 'leo')).rglob('*.py')):
+            for i, line in enumerate(path.read_text(errors='replace').split('\n'), 1):
+                for m in re.finditer(r'\bg\.([A-Za-z_]\w*)\s*=[^=]', line):
+                    name = m.group(1)
+                    if name in names and f'util.{name}' not in line:
+                        rel = path.relative_to(REPO)
+                        offenders.append(f'{rel}:{i}: g.{name} without util.{name}')
+        self.assertEqual(offenders, [], '\n'.join(offenders))
 
     # @-others
 

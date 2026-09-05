@@ -9,13 +9,10 @@ Important: This module imports no other Leo module.
 # @+<< leoGlobals: imports >>
 # @+node:ekr.20050208101229: ** << leoGlobals: imports >>
 from __future__ import annotations
-import binascii
-from collections.abc import Callable, Iterable, Sequence
-import codecs
+from collections.abc import Callable, Sequence
 import copy
 import fnmatch
 import gc
-import gettext
 import glob
 import importlib
 import inspect
@@ -58,6 +55,54 @@ StringIO = io.StringIO
 # keeps working unchanged. See that module's docstring, and TODO.md.
 from leo.leolib import state as leoLibState
 from leo.leolib.util import (  # noqa: F401
+    _context,
+    caller,
+    chdir,
+    checkUnchangedIvars,
+    deprecated,
+    extractExecutableString,
+    finalize,
+    finalize_join,
+    makeAllNonExistentDirectories,
+    os_path_abspath,
+    os_path_basename,
+    os_path_exists,
+    os_path_normpath,
+    os_path_split,
+    os_path_splitext,
+    printDict,
+    readFileIntoString,
+    readFileIntoUnicodeString,
+    relativeDirectory,
+    set_delims_from_string,
+    shortFilename,
+    skip_id,
+    toEncodedString,
+    tr,
+    writeFile,
+    _callerName,
+    _error_color,
+    blue,
+    callers,
+    error,
+    es,
+    es_error,
+    es_exception,
+    es_print,
+    es_print_error,
+    es_print_unique_message,
+    getPythonEncodingFromString,
+    internalError,
+    isValidEncoding,
+    pr,
+    printObj,
+    red,
+    shortFileName,
+    toUnicode,
+    trace,
+    translateArgs,
+    translateString,
+    warning,
     Bunch,
     CheckVersion,
     CheckVersionToInt,
@@ -274,9 +319,6 @@ if TYPE_CHECKING:  # pragma: no cover
     Request = Any  # A requests.Request object.
     Value = Any
 # @-<< leoGlobals: annotations >>
-# @+<< leoGlobals: global constants >>
-# @+node:ekr.20240515093718.1: ** << leoGlobals: global constants >>
-# @-<< leoGlobals: global constants >>
 # @+<< define g.globalDirectiveList >>
 # @+node:EKR.20040610094819: ** << define g.globalDirectiveList >>
 directives_pat = None  # Set below.
@@ -824,7 +866,7 @@ class KeyStroke:
     # @+node:ekr.20180415082249.1: *4* ks.finalize_binding
     def finalize_binding(self, binding: str) -> str:
         # This trace is good for devs only.
-        trace = False and 'keys' in g.app.debug
+        trace = False and 'keys' in g.app.debug  # noqa: F811
         self.mods = self.find_mods(binding)
         s = self.strip_mods(binding)
         s = self.finalize_char(s)  # May change self.mods.
@@ -1911,7 +1953,7 @@ class Tracer:
 
     # @+others
     # @+node:ekr.20080531075119.2: *4*  __init__ (Tracer)
-    def __init__(self, limit: int = 0, trace: bool = False, verbose: bool = False) -> None:
+    def __init__(self, limit: int = 0, trace: bool = False, verbose: bool = False) -> None:  # noqa: F811
         # Keys are function names.
         # Values are the number of times the function was called by the caller.
         self.callDict: dict[str, dict] = {}
@@ -2013,7 +2055,7 @@ class Tracer:
     def updateStats(self, name: str) -> None:
         if not self.stack:
             return
-        caller = self.stack[-1]
+        caller = self.stack[-1]  # noqa: F811
         # d is a dict representing the called functions.
         # Keys are called functions, values are counts.
         d: dict[str, int] = self.callDict.get(caller, {})
@@ -2025,7 +2067,7 @@ class Tracer:
     # @-others
 
 
-def startTracer(limit: int = 0, trace: bool = False, verbose: bool = False) -> g.Tracer:
+def startTracer(limit: int = 0, trace: bool = False, verbose: bool = False) -> g.Tracer:  # noqa: F811
     t = g.Tracer(limit=limit, trace=trace, verbose=verbose)
     sys.settrace(t.tracer)
     return t
@@ -2145,7 +2187,7 @@ class TracingNullObject:
 # @+node:ekr.20190330072832.1: *4* g.null_object_print
 def null_object_print(id_: int, kind: str, *args: Args) -> None:
     tag = tracing_tags.get(id_, "<NO TAG>")
-    callers = g.callers(3).split(',')
+    callers = g.callers(3).split(',')  # noqa: F811
     callers_s = ','.join(callers[:-1])
     s = f"{kind}.{tag}"
     if args:
@@ -2241,24 +2283,6 @@ def _assert(condition: Any, show_callers: bool = True) -> bool:
 
 
 # @+node:ekr.20051023083258: *4* g.callers, caller, my_name, etc.
-# @+node:ekr.20230128025911.1: *5* g.callers
-def callers(n: int = 4) -> str:
-    """
-    Return a string containing a comma-separated list of the calling
-    function's callers.
-    """
-    # Be careful to call g._callerName with smaller values of i first:
-    # sys._getframe throws ValueError if there are less than i entries.
-    i, result = 3, []
-    while 1:
-        if s := _callerName(n=i):
-            result.append(s)
-        if not s or len(result) >= n:
-            break
-        i += 1
-    return ','.join(reversed(result))
-
-
 # @+node:ekr.20230128030346.1: *5* g.callers_list
 def callers_list(n: int = 4) -> list[str]:
     """
@@ -2275,36 +2299,6 @@ def callers_list(n: int = 4) -> list[str]:
             break
         i += 1
     return list(reversed(result))
-
-
-# @+node:ekr.20031218072017.3107: *5* g._callerName
-def _callerName(n: int) -> str:
-    """Return the name of the caller n levels back in the call stack."""
-    try:
-        # Get the function name from the call stack.
-        f1 = sys._getframe(n)  # The stack frame, n levels up.
-        code1 = f1.f_code  # The code object
-        locals_ = f1.f_locals  # The local namespace.
-        name = code1.co_name
-        # sfn = shortFilename(code1.co_filename)  # The file name.
-        # line = code1.co_firstlineno
-        obj = locals_.get('self')
-        if obj and name == '__init__':
-            return f"{obj.__class__.__name__}.{name}"
-        return name
-    except ValueError:
-        # The stack is not deep enough OR
-        # sys._getframe does not exist on this platform.
-        return ''
-    except Exception:
-        es_exception()
-        return ''  # "<no caller name>"
-
-
-# @+node:ekr.20180328170441.1: *5* g.caller
-def caller(i: int = 1) -> str:
-    """Return the caller name i levels up the stack."""
-    return g.callers(i + 1).split(',')[0]
 
 
 # @+node:ekr.20230929150105.1: *5* g.my_name
@@ -2452,27 +2446,6 @@ def file_date(theFile: str, format: str = '') -> str:
 # getLine = get_line
 
 
-# @+node:ekr.20080729142651.1: *4* g.getIvarsDict and checkUnchangedIvars
-def checkUnchangedIvars(
-    obj: object,
-    d: dict[str, Value],
-    exceptions: Sequence[str] | None = None,
-) -> bool:
-    if not exceptions:
-        exceptions = []
-    ok = True
-    for key in d:
-        if key not in exceptions:
-            if getattr(obj, key) != d.get(key):
-                g.trace(
-                    f"changed ivar: {key} "
-                    f"old: {repr(d.get(key))} "
-                    f"new: {repr(getattr(obj, key))}"
-                )  # fmt: skip
-                ok = False
-    return ok
-
-
 # @+node:ekr.20031218072017.3128: *4* g.pause
 def pause(s: str) -> None:
     g.pr(s)
@@ -2498,12 +2471,6 @@ def pdb(message: str = '') -> None:
 
 
 # @+node:ekr.20171023140544.1: *4* g.printObj & aliases
-def printObj(obj: object, *, tag: str = '', indent: int = 0, offset: int = 0) -> None:
-    """Pretty print any Python object using g.pr."""
-    g.pr(objToString(obj, indent=indent, tag=tag, offset=offset))
-
-
-printDict = printObj
 printList = printObj
 printTuple = printObj
 
@@ -3047,57 +3014,6 @@ def set_delims_from_language(language: str) -> tuple[str, str, str]:
     return '', '', ''  # Indicate that no change should be made
 
 
-# @+node:ekr.20031218072017.1383: *3* g.set_delims_from_string
-def set_delims_from_string(s: str) -> tuple[str, str, str]:
-    """
-    Return (delim1, delim2, delim2), the delims following the @comment
-    directive.
-
-    This code can be called from @language logic, in which case s can
-    point at @comment
-    """
-    # Skip an optional @comment
-    tag = "@comment"
-    fail = '', '', ''
-    i = 0
-    if g.match_word(s, i, tag):
-        i += len(tag)
-    count = 0
-    delims = ['', '', '']
-    while count < 3 and i < len(s):
-        i = j = g.skip_ws(s, i)
-        while i < len(s) and not g.is_ws(s[i]) and not g.is_nl(s, i):
-            i += 1
-        if j == i:
-            break
-        delims[count] = s[j:i] or ''
-        count += 1
-    # 'rr 09/25/02
-    if count == 2:  # delims[0] is always the single-line delim.
-        delims[2] = delims[1]
-        delims[1] = delims[0]
-        delims[0] = ''
-    for i in range(3):
-        if delims[i]:
-            if delims[i].startswith("@0x"):
-                # Allow delimiter definition as @0x + hexadecimal encoded delimiter
-                # to avoid problems with duplicate delimiters on the @comment line.
-                # If used, whole delimiter must be encoded.
-                if len(delims[i]) == 3:
-                    g.warning(f"'{delims[i]}' delimiter is invalid")
-                    return fail
-                try:
-                    delims[i] = g.toUnicode(binascii.unhexlify(delims[i][3:]))  # #4753
-                except Exception as e:
-                    g.warning(f"'{delims[i]}' delimiter is invalid: {e}")
-                    return fail
-            else:
-                # 7/8/02: The "REM hack": replace underscores by blanks.
-                # 9/25/02: The "perlpod hack": replace double underscores by newlines.
-                delims[i] = delims[i].replace("__", '\n').replace('_', ' ')
-    return delims[0], delims[1], delims[2]
-
-
 # @+node:ekr.20031218072017.1384: *3* g.set_language
 def set_language(s: str, i: int, issue_errors_flag: bool = False) -> tuple[str, str, str, str]:
     """Scan the @language directive that appears at s[i:].
@@ -3140,17 +3056,6 @@ update_directives_pat()
 
 
 # @+node:ekr.20031218072017.3116: ** g.Files & Directories
-# @+node:ekr.20080606074139.2: *3* g.chdir
-def chdir(path: str) -> None:
-    """Change current directory to the directory corresponding to path."""
-    if g.unitTesting:
-        return  # Don't change the global environment in unit tests!
-    if not g.os_path_isdir(path):
-        path = g.os_path_dirname(path)
-    if g.os_path_isdir(path) and g.os_path_exists(path):
-        os.chdir(path)
-
-
 # @+node:ekr.20120222084734.10287: *3* g.compute...Dir
 # For compatibility with old code.
 
@@ -3341,26 +3246,6 @@ def is_binary_string(s: str) -> bool:
     return False
 
 
-# @+node:ekr.20031218072017.3119: *3* g.makeAllNonExistentDirectories
-def makeAllNonExistentDirectories(theDir: str) -> str:
-    """
-    A wrapper from os.makedirs.
-    Attempt to make all non-existent directories.
-
-    Return True if the directory exists or was created successfully.
-    """
-    # Return True if the directory already exists.
-    theDir = g.os_path_normpath(theDir)
-    if g.os_path_isdir(theDir) and g.os_path_exists(theDir):
-        return theDir
-    # #1450: Create the directory with os.makedirs.
-    try:
-        os.makedirs(theDir, mode=0o777, exist_ok=False)
-        return theDir
-    except Exception:
-        return ''
-
-
 # @+node:ekr.20090520055433.5945: *3* g.openWithFileName
 def openWithFileName(
     fileName: str,
@@ -3411,79 +3296,6 @@ def readFileIntoEncodedString(fn: str, silent: bool = False) -> bytes:
     return b''
 
 
-# @+node:ekr.20100125073206.8710: *3* g.readFileIntoString
-def readFileIntoString(
-    fileName: str,
-    encoding: str = 'utf-8',  # BOM may override this.
-    kind: str = '',  # @file, @edit, ...
-    verbose: bool = True,
-) -> tuple[str | None, str]:
-    """
-    Return the contents of the file whose full path is fileName.
-
-    Return (s,e)
-    s is the string, converted to unicode, or None if there was an error.
-    e is the encoding of s, computed in the following order:
-    - The BOM encoding if the file starts with a BOM mark.
-    - The encoding given in the # -*- coding: utf-8 -*- line for python files.
-    - The encoding given by the 'encoding' keyword arg.
-    - None, which typically means 'utf-8'.
-    """
-    fail = None, ''
-    if not fileName:
-        if verbose:
-            g.trace('no fileName arg given')
-        return fail
-    if g.os_path_isdir(fileName):
-        if verbose:
-            g.trace('not a file:', fileName)
-        return fail
-    if not g.os_path_exists(fileName):
-        if verbose:
-            g.error('file not found:', fileName)
-        return fail
-    try:
-        e = ''
-        with open(fileName, 'rb') as f:
-            bytes_s = f.read()
-        # Fix #391.
-        if not bytes_s:
-            return fail
-        # New in Leo 4.11: check for unicode BOM first.
-        e, bytes_s = g.stripBOM(bytes_s)
-        if not e:
-            # Python's encoding comments override everything else.
-            _, ext = g.os_path_splitext(fileName)
-            if ext == '.py':
-                e = g.getPythonEncodingFromString(bytes_s)
-        s = g.toUnicode(bytes_s, encoding=e or encoding)
-        return s, e
-    except OSError:
-        # Translate 'can not open' and kind, but not fileName.
-        if verbose:
-            g.error('can not open', '', (kind or ''), fileName)
-    except Exception:
-        g.error(f"readFileIntoString: exception reading {fileName}")
-        g.es_exception()
-    return fail
-
-
-# @+node:ekr.20160504062833.1: *3* g.readFileIntoUnicodeString
-def readFileIntoUnicodeString(fn: str, encoding: str = '', silent: bool = False) -> str:
-    """Return the raw contents of the file whose full path is fn."""
-    try:
-        with open(fn, 'rb') as f:
-            s = f.read()
-        return g.toUnicode(s, encoding=encoding)
-    except OSError:
-        if not silent:
-            g.error('can not open', fn)
-    except Exception:
-        g.error(f"readFileIntoUnicodeString: unexpected exception reading {fn}")
-        g.es_exception()
-    return ''
-
-
 # @+node:ekr.20031218072017.3120: *3* g.readlineForceUnixNewline
 # @+at Stephen P. Schaefer 9/7/2002
 #
@@ -3505,72 +3317,11 @@ def readlineForceUnixNewline(f: IO, fileName: str = '') -> str:
     return s
 
 
-# @+node:ekr.20250615134309.1: *3* g.relativeDirectory
-def relativeDirectory(baseDir: str, path: str) -> str:
-    """
-    'path' should be an absolute path.
-    Return 'path' relative to the base directory.
-    Return 'path' if 'baseDir' is not an ancestor of 'path'.
-    """
-
-    def oops(message: str) -> None:
-        if not g.unitTesting:
-            g.es_print(f"g.relativeDirectory: {message}")
-
-    if not path:
-        oops(f"{path!r} should be an absolute path")
-        return path
-
-    if not baseDir:
-        # Likely an unsaved outline.
-        if not g.unitTesting:
-            g.es_print_unique_message('Save this outline to use relative import paths')
-        return path
-
-    if g.isWindows:
-        baseDir = baseDir.lower()
-        path = path.lower()
-    try:
-        if rel_path := os.path.relpath(path, start=baseDir):
-            return rel_path
-    except ValueError:
-        # Windows throws ValueError if the drives are different.
-        oops(f"{baseDir} and {path} are on different drives")
-    return path
-
-
 # @+node:ekr.20060328150113: *3* g.setGlobalOpenDir
 def setGlobalOpenDir(fileName: str) -> None:
     if fileName:
         g.app.globalOpenDir = g.os_path_dirname(fileName)
         # g.es('current directory:',g.app.globalOpenDir)
-
-
-# @+node:ekr.20031218072017.3125: *3* g.shortFileName & shortFilename
-def shortFileName(fileName: str, n: int | None = None) -> str:
-    """Return the base name of a path."""
-    if n is not None:
-        g.trace('"n" keyword argument is no longer used')
-    return g.os_path_basename(fileName) if fileName else ''
-
-
-shortFilename = shortFileName
-
-
-# @+node:ekr.20190114061452.26: *3* g.writeFile
-def writeFile(contents: bytes | str, encoding: str, fileName: str) -> bool:
-    """Create a file with the given contents."""
-    try:
-        bytes_contents = (  # #4753
-            contents if isinstance(contents, bytes)
-            else g.toEncodedString(contents, encoding=encoding)
-        )  # fmt: skip
-        with open(fileName, 'wb') as f:
-            f.write(bytes_contents)
-        return True
-    except Exception as e:
-        print(f"exception writing: {fileName}:\n{e}")
-        return False
 
 
 # @+node:ekr.20230113043029.1: *3* g.write_file_if_changed
@@ -3931,15 +3682,6 @@ def skip_typedef(s: str, i: int) -> int:
 # of a non-empty or non-nl terminated line
 
 
-# @+node:ekr.20040705195048: *4* g.skip_id
-def skip_id(s: str, i: int, chars: str = '') -> int:
-    chars = g.toUnicode(chars) if chars else ''
-    n = len(s)
-    while i < n and (g.isWordChar(s[i]) or s[i] in chars):
-        i += 1
-    return i
-
-
 # @+node:ekr.20031218072017.3187: *4* g.skip_line, skip_to_start/end_of_line
 # @+at These methods skip to the next newline, regardless of whether the
 # newline may be preceded by a backslash. Consequently, they should be
@@ -4200,7 +3942,7 @@ def getGitVersion(directory: str = '') -> tuple[str, str, str]:
     """Return a tuple (author, build, date) from the git log, where all may be empty."""
 
     # -n: Get only the last log.
-    trace = 'git' in g.app.debug
+    trace = 'git' in g.app.debug  # noqa: F811
     fail = '', '', ''
     s: bytes | str
     try:
@@ -4566,7 +4308,7 @@ def import_module(name: str, package: str = '') -> ModuleType | None:
     """
     A thin wrapper over importlib.import_module.
     """
-    trace = 'plugins' in g.app.debug and not g.unitTesting
+    trace = 'plugins' in g.app.debug and not g.unitTesting  # noqa: F811
     exceptions: list[str] = []
     try:
         m = importlib.import_module(name, package=package)
@@ -4675,59 +4417,6 @@ def checkUnicode(s: str, encoding: str = '') -> str:
     return s
 
 
-# @+node:ekr.20100125073206.8709: *4* g.getPythonEncodingFromString
-def getPythonEncodingFromString(s: bytes | str) -> str:
-    """Return the encoding given by Python's encoding line.
-    s is the entire file.
-    """
-    encoding = 'utf-8'
-    tag, tag2 = '# -*- coding:', '-*-'
-    n1, n2 = len(tag), len(tag2)
-    if not isinstance(s, (bytes, str)):
-        raise ValueError(f"{tag}: {s=}\n{g.callers()=}")
-    if not s:
-        return encoding
-
-    # Convert to unicode before calling startswith.
-    # The encoding doesn't matter: we only look at the first line, and if
-    # the first line is an encoding line, it will contain only ascii characters.
-    s = g.toUnicode(s)  # Bug fix: 2025/03/24: do *not* force ascii encoding.
-    lines = g.splitLines(s)
-    line1 = lines[0].strip()
-    if line1.startswith(tag) and line1.endswith(tag2):
-        e = line1[n1:-n2].strip()
-        if e and g.isValidEncoding(e):
-            encoding = e
-    elif g.match_word(line1, 0, '@first'):
-        line1 = line1[len('@first') :].strip()
-        if line1.startswith(tag) and line1.endswith(tag2):
-            e = line1[n1:-n2].strip()
-            if e and g.isValidEncoding(e):
-                encoding = e
-    return encoding
-
-
-# @+node:ekr.20031218072017.1500: *4* g.isValidEncoding
-def isValidEncoding(encoding: str) -> bool:
-    """Return True if the encoding is valid."""
-    if not encoding:
-        return False
-    if sys.platform == 'cli':
-        return True
-    try:
-        codecs.lookup(encoding)
-        return True
-    except LookupError:  # Windows
-        return False
-    except AttributeError:  # Linux
-        return False
-    except Exception:
-        # UnicodeEncodeError
-        g.es_print('Please report the following error')
-        g.es_exception()
-        return False
-
-
 # @+node:ekr.20240325175449.1: *4* g.strToBytes
 def strToBytes(s: str, reportErrors: bool = False) -> bytes:
     """Convert unicode string to an encoded string."""
@@ -4741,42 +4430,6 @@ def strToBytes(s: str, reportErrors: bool = False) -> bytes:
             g.error(f"Error converting {s} from unicode to {encoding}")
     # Tracing these calls directly yields thousands of calls.
     return b
-
-
-# @+node:ekr.20050208093800: *4* g.toEncodedString
-def toEncodedString(s: bytes | str, encoding: str = '', reportErrors: bool = False) -> bytes:
-    """Convert unicode string to an encoded string."""
-    tag = 'g.toEncodedString'
-    if isinstance(s, bytes):
-        return s
-    if isinstance(s, str):
-        if not encoding:
-            encoding = 'utf-8'
-        try:
-            return s.encode(encoding, "strict")
-        except UnicodeError as e:
-            if reportErrors:
-                g.error(f"{tag} {e}! {encoding=} {s=}\n{g.callers()=}")
-            return s.encode(encoding, "replace")
-    raise ValueError(f"{tag}: {s=} {g.callers()=}")
-
-
-# @+node:ekr.20050208093800.1: *4* g.toUnicode
-def toUnicode(s: bytes | str, encoding: str = '', reportErrors: bool = False) -> str:
-    """Convert bytes to unicode if necessary."""
-    tag = 'g.toUnicode'
-    if isinstance(s, str):
-        return s
-    if isinstance(s, bytes):
-        if not encoding:
-            encoding = 'utf-8'
-        try:
-            return s.decode(encoding, 'strict')
-        except (UnicodeDecodeError, UnicodeError) as e:
-            if reportErrors:
-                g.trace(f"{tag} {e}! {encoding=} {s=}\n{g.callers()=}")
-            return s.decode(encoding, 'replace')
-    raise ValueError(f"{tag}: {s=}\n{g.callers()=}")
 
 
 # @+node:ekr.20031218072017.3197: *3* g.Whitespace
@@ -4859,34 +4512,17 @@ def enl(tabName: str = 'Log') -> None:
 # PR #4827
 
 
-def blue(*args: Args, **kwargs: Any) -> None:
-    kwargs['color'] = 'blue'
-    g.es_print(*args, **kwargs)
-
-
-def error(*args: Args, **kwargs: KWargs) -> None:
-    kwargs['color'] = 'error'
-    g.es_print(*args, **kwargs)
-
-
 def note(*args: Args, **kwargs: KWargs) -> None:
     kwargs['color'] = 'note'
     g.es_print(*args, **kwargs)
 
 
-def red(*args: Args, **kwargs: KWargs) -> None:
-    kwargs['color'] = 'red'
-    g.es_print(*args, **kwargs)
-
-
-def warning(*args: Args, **kwargs: KWargs) -> None:
-    kwargs['color'] = 'warning'
-    g.es_print(*args, **kwargs)
-
-
 # @+node:ekr.20070626132332: *3* g.es
-def es(*args: Args, **kwargs: KWargs) -> None:
-    """Put all non-keyword args to the log pane.
+def _es_to_log(*args: Args, **kwargs: KWargs) -> None:
+    """Put all non-keyword args to Leo's log pane.
+
+    Installed as state.log_sink at the end of this module. util.es is what
+    callers use; this is the half that needs a window.
     The first, third, fifth, etc. arg translated by g.translateString.
     Supports color, comma, newline, spaces and tabName keyword arguments.
     """
@@ -4946,21 +4582,6 @@ def es_dump(s: str, n: int = 30, title: str = '') -> None:
         i += n
 
 
-# @+node:ekr.20031218072017.3110: *3* g.es_error & es_print_error
-def es_error(*args: Args, **kwargs: KWargs) -> None:
-    color = kwargs.get('color')
-    if not color and g.app.config:
-        kwargs['color'] = g.app.config.getColor("log-error-color") or 'red'
-    g.es(*args, **kwargs)
-
-
-def es_print_error(*args: Args, **kwargs: KWargs) -> None:
-    color = kwargs.get('color')
-    if not color and g.app and g.app.config:
-        kwargs['color'] = g.app.config.getColor("log-error-color") or 'red'
-    g.es_print(*args, **kwargs)
-
-
 # @+node:ekr.20031218072017.3111: *3* g.es_event_exception
 def es_event_exception(eventName: str, full: bool = False) -> None:
     g.es("exception handling ", eventName, "event")
@@ -4975,15 +4596,6 @@ def es_event_exception(eventName: str, full: bool = False) -> None:
         traceback.print_exc()
 
 
-# @+node:ekr.20031218072017.3112: *3* g.es_exception
-def es_exception(*args: Sequence, **kwargs: Sequence) -> None:
-    """Print the last exception."""
-    # val is the second argument to the raise statement.
-    typ, val, tb = sys.exc_info()
-    for line in traceback.format_exception(typ, val, tb):
-        g.es_print_error(line)
-
-
 # @+node:ekr.20061015090538: *3* g.es_exception_type
 def es_exception_type(color: str = "red") -> None:  # PR #4772: remove unused c arg.
     # exctype is a Exception class object; value is the error message.
@@ -4994,18 +4606,6 @@ def es_exception_type(color: str = "red") -> None:  # PR #4772: remove unused c 
 
 # @+node:ekr.20050707064040: *3* g.es_print
 # see: http://www.diveintopython.org/xml_processing/unicode.html
-
-
-def es_print(*args: Args, **kwargs: KWargs) -> None:
-    """
-    Print all non-keyword args, and put them to the log pane.
-
-    The first, third, fifth, etc. arg translated by g.translateString.
-    Supports color, comma, newline, spaces and tabName keyword arguments.
-    """
-    g.pr(*args, **kwargs)
-    if g.app and not g.unitTesting:
-        g.es(*args, **kwargs)
 
 
 # @+node:ekr.20050707065530: *3* g.es_trace
@@ -5064,17 +4664,6 @@ def goto_last_exception(c: Cmdr) -> None:
         g.trace('No previous exception')
 
 
-# @+node:ekr.20100126062623.6240: *3* g.internalError
-def internalError(*args: Args) -> None:
-    """Report a serious internal error in Leo."""
-    callers = g.callers(20).split(',')
-    caller = callers[-1]
-    g.error('\nInternal Leo error in', caller)
-    g.es_print(*args)
-    g.es_print('Called from', ', '.join(callers[:-1]))
-    g.es_print('Please report this error to Leo\'s developers', color='red')
-
-
 # @+node:ekr.20240325161046.1: *3* g.isUniqueClass
 def isUniqueClass(obj: object, list_or_class: Any, *, n: int = 2) -> None:
     """Print a message (once) if obj is not an instance of list_or_class."""
@@ -5115,42 +4704,6 @@ def log_to_file(s: str, fn: str = '') -> None:
 
 # @+node:ekr.20080710101653.1: *3* g.pr
 # see: http://www.diveintopython.org/xml_processing/unicode.html
-
-
-def pr(*args: Args, **kwargs: KWargs) -> None:
-    """
-    Print all non-keyword args. This is a wrapper for the print statement.
-
-    The first, third, fifth, etc. arg translated by g.translateString.
-    Supports color, comma, newline, spaces and tabName keyword arguments.
-    """
-    # Compute the effective args.
-    d = {'commas': False, 'newline': True, 'spaces': True}
-    d = doKeywordArgs(kwargs, d)
-    newline = d.get('newline')
-    # Unit tests require sys.stdout.
-    stdout = sys.stdout if sys.stdout and g.unitTesting else sys.__stdout__
-    if not stdout:
-        # #541.
-        return
-    if g.isWindows:
-        encoding = 'ascii'  # 2011/11/9.
-    elif getattr(stdout, 'encoding', None):
-        # sys.stdout is a TextIOWrapper with a particular encoding.
-        encoding = stdout.encoding
-    else:
-        encoding = 'utf-8'
-    s = translateArgs(args, d)  # Translates everything to unicode.
-    s = g.toUnicode(s, encoding=encoding, reportErrors=False)
-    if newline:
-        s += '\n'
-    # Python's print statement *can* handle unicode, but
-    # sitecustomize.py must have sys.setdefaultencoding('utf-8')
-    try:
-        # #783: print-* commands fail under pythonw.
-        stdout.write(s)
-    except Exception:
-        pass
 
 
 # @+node:ekr.20031218072017.3113: *3* g.printBindings
@@ -5199,27 +4752,6 @@ def printLeoModules(message: str = '') -> None:
     g.pr('')
 
 
-# @+node:ekr.20031218072017.2317: *3* g.trace
-def trace(*args: Args, **kwargs: KWargs) -> None:
-    """Print the name of the calling function followed by all the args."""
-    name = g._callerName(2)
-    if name.endswith(".pyc"):
-        name = name[:-1]
-    g.pr(name, *args)
-
-
-# @+node:ekr.20241104143456.1: *3* g.print_unique_message & es_print_unique_message
-def es_print_unique_message(message: str, *, color: str = 'error') -> bool:
-    """
-    Print the given message once. Return True if the message was printed.
-    """
-    if message not in g_unique_message_d:
-        g_unique_message_d[message] = True
-        g.es_print(message, color=color)
-        return True
-    return False
-
-
 # @+node:ekr.20240325064618.1: *3* g.traceUnique & traceUniqueClass
 def traceUnique(value: object, *, n: int = 2, pad: int | None = None) -> None:
     """Print unique values associated with g.callers(n)."""
@@ -5253,83 +4785,9 @@ def traceUniqueClass(obj: object, *, n: int = 2, pad: int = 30) -> None:
 
 
 trace_unique_class = traceUniqueClass
-# @+node:ekr.20080220111323: *3* g.translateArgs
-console_encoding = None
-
-
-def translateArgs(args: Iterable, d: dict[str, Value]) -> str:
-    """
-    Return the concatenation of s and all args, with odd args translated.
-    """
-    global console_encoding
-    if not console_encoding:
-        e = sys.getdefaultencoding()
-        console_encoding = e if isValidEncoding(e) else 'utf-8'
-    result: list[str] = []
-    n, spaces = 0, d.get('spaces')
-    for arg in args:
-        n += 1
-        # First, convert to unicode.
-        if isinstance(arg, str):
-            arg = toUnicode(arg, console_encoding)
-        # Now translate.
-        if not isinstance(arg, str):
-            arg = repr(arg)
-        elif (n % 2) == 1:
-            arg = translateString(arg)
-        else:
-            pass  # The arg is an untranslated string.
-        if arg:
-            if result and spaces:
-                result.append(' ')
-            result.append(arg)
-    return ''.join(result)
-
-
-# @+node:ekr.20060810095921: *3* g.translateString & tr
-def translateString(s: str) -> str:
-    """Return the translated text of s."""
-    upper = app and getattr(app, 'translateToUpperCase', None)
-    if not isinstance(s, str):
-        s = str(s, 'utf-8')
-    if upper:
-        s = s.upper()
-    else:
-        s = gettext.gettext(s)
-    return s
-
-
-tr = translateString
 
 
 # @+node:EKR.20040612114220: ** g.Miscellaneous
-# @+node:ekr.20250403055718.1: *3* g._context
-def _context(n: int = 1) -> str:
-    """Return the full context of the function/method n levels up the stack frame."""
-    # Similar to g._callerName.
-    try:
-        f1 = sys._getframe(n)  # The stack frame, n levels up.
-        code1 = f1.f_code  # The code object
-        locals_ = f1.f_locals  # The local namespace.
-        module = shortFilename(code1.co_filename)  # The module's file name.
-        if module == 'leoGlobals.py':
-            module = 'g'
-        obj = locals_.get('self')
-        if obj is None:
-            context = module
-        else:
-            try:
-                class_name = obj.__class__.__name__
-                if class_name == 'Commands':
-                    class_name = 'c'
-                context = f"{module}:{class_name}"
-            except Exception:
-                context = module
-    except Exception:
-        context = '<unknown context>:'
-    return context
-
-
 # @+node:ekr.20120928142052.10116: *3* g.actualColor
 def actualColor(color: str) -> str:
     """Return the actual color corresponding to the requested color."""
@@ -5385,17 +4843,6 @@ def createScratchCommander(fileName: str = '') -> None:
     assert c.rootPosition()
     frame.setInitialWindowGeometry()
     frame.resizePanesToRatio(frame.compute_ratio(), frame.compute_secondary_ratio())
-
-
-# @+node:ekr.20250403051420.1: *3* g.deprecated
-def deprecated() -> None:
-    """Issue a single deprecation message for the caller of this method."""
-    message = f"Warning: {g._context(2)}.{g.caller()} is deprecated"
-    if g.unitTesting:
-        message = '\n' + message
-    if print_unique_message(message):
-        print(g.callers(6))
-        print('')
 
 
 # @+node:ekr.20060913090832.1: *3* g.init_zodb
@@ -5488,81 +4935,11 @@ def windows() -> list | None:
 # @+at Note: all these methods return Unicode strings. It is up to the user to
 # convert to an encoded string as needed, say when opening a file.
 # @+node:ekr.20230410134119.1: *3* g.finalize
-def finalize(path: str) -> str:
-    """
-    Finalize the path. Do not call os.path.realpath.
-
-    - Call os.path.expanduser and  os.path.expandvars.
-    - Convert to an absolute path, relative to os.getwd().
-    - On Windows, convert backslashes to forward slashes.
-    """
-    if not path:
-        return ''
-    path = os.path.expanduser(path)
-    path = os.path.expandvars(path)
-
-    # Convert to an absolute path, similar to os.path.normpath(os.getcwd(), path)
-    path = os.path.abspath(path)
-    path = os.path.normpath(path)
-
-    # Convert backslashes to forward slashes, regardless of platform.
-    path = g.os_path_normslashes(path)
-    return path
-
-
 os_path_finalize = finalize  # Compatibility.
 
 
 # @+node:ekr.20230410133838.1: *3* g.finalize_join
-def finalize_join(*args: Args) -> str:
-    """
-    Join and finalize. Do not call os.path.realpath.
-
-    - Return an empty string if all of the args are empty.
-    - Call os.path.expanduser and  os.path.expandvars for each arg.
-    - Call os.path.join on the resulting list of expanded arguments.
-    - Convert to an absolute path, relative to os.getwd().
-    - On Windows, convert backslashes to forward slashes.
-    """
-    uargs = [z for z in args if z]
-    if not uargs:
-        return ''
-    # Expand everything before joining.
-    uargs2 = [os.path.expandvars(os.path.expanduser(z)) for z in uargs]
-
-    # Join the paths.
-    path = os.path.join(*uargs2)
-
-    # Convert to an absolute path, similar to os.path.normpath(os.getcwd(), path)
-    path = os.path.abspath(path)
-    path = os.path.normpath(path)
-
-    # Convert backslashes to forward slashes, regardless of platform.
-    path = g.os_path_normslashes(path)
-    return path
-
-
 os_path_finalize_join = finalize_join  # Compatibility.
-
-
-# @+node:ekr.20031218072017.2146: *3* g.os_path_abspath
-def os_path_abspath(path: str) -> str:
-    """Convert a path to an absolute path."""
-    if not path:
-        return ''
-    path = os.path.abspath(path)
-    path = g.os_path_normslashes(path)
-    return path
-
-
-# @+node:ekr.20031218072017.2147: *3* g.os_path_basename
-def os_path_basename(path: str) -> str:
-    """Return the second half of the pair returned by split(path)."""
-    if not path:
-        return ''
-    path = os.path.basename(path)
-    path = g.os_path_normslashes(path)
-    return path
 
 
 # @+node:ekr.20230418102243.1: *3* g.os_path_expanduser
@@ -5574,38 +4951,6 @@ def os_path_expanduser(path: str) -> str:
     path = os.path.expandvars(path)
     path = os.path.normpath(path)
     return path
-
-
-# @+node:ekr.20031218072017.2149: *3* g.os_path_exists
-def os_path_exists(path: str) -> bool:
-    """Return True if path exists."""
-    return os.path.exists(path) if path else False
-
-
-# @+node:ekr.20031218072017.2157: *3* g.os_path_normpath
-def os_path_normpath(path: str) -> str:
-    """Normalize the path."""
-    if not path:
-        return ''
-    path = os.path.normpath(path)
-    path = g.os_path_normslashes(path)
-    return path
-
-
-# @+node:ekr.20031218072017.2158: *3* g.os_path_split
-def os_path_split(path: str) -> tuple[str, str]:
-    if not path:
-        return '', ''
-    head, tail = os.path.split(path)
-    return head, tail
-
-
-# @+node:ekr.20031218072017.2159: *3* g.os_path_splitext
-def os_path_splitext(path: str) -> tuple[str, str]:
-    if not path:
-        return '', ''
-    head, tail = os.path.splitext(path)
-    return head, tail
 
 
 # @+node:ekr.20090829140232.6036: *3* g.os_startfile
@@ -5748,7 +5093,7 @@ def execute_shell_commands(
     commands: str | list[str],
     *,
     shell: bool = True,  # Must be True in many places in Leo's code!
-    trace: bool = False,
+    trace: bool = False,  # noqa: F811
 ) -> None:
     """
     Execute each shell command in a separate process.
@@ -5886,39 +5231,6 @@ def composeScript(
     return script
 
 
-# @+node:ekr.20170123074946.1: *4* g.extractExecutableString
-def extractExecutableString(c: Outline | Cmdr, p: Position, s: str) -> str:
-    """
-    Return all lines for the given @language directive.
-
-    Ignore all lines under control of any other @language directive.
-    """
-    # Rewritten to fix #1071.
-    if g.unitTesting:
-        return s  # Regrettable, but necessary.
-
-    # Return s if no @language in effect. Should never happen.
-    language = c.getLanguage(p)
-    if not language:
-        return s
-
-    # Return s if @language is unambiguous.
-    pattern = r'^@language\s+(\w+)'
-    matches = list(re.finditer(pattern, s, re.MULTILINE))
-    if len(matches) < 2:
-        return s
-
-    # Scan the lines, extracting only the valid lines.
-    extracting = False
-    result: list[str] = []
-    for line in g.splitLines(s):
-        if m := re.match(pattern, line):
-            extracting = m.group(1) == language
-        elif extracting:
-            result.append(line)
-    return ''.join(result)
-
-
 # @+node:ekr.20060624085200: *3* g.handleScriptException
 def handleScriptException(
     c: Cmdr,
@@ -5959,7 +5271,6 @@ def handleScriptException(
         g.es_exception()
 
 
-# @+node:ekr.20230803155851.1: ** g.Sentinels
 # @+node:ekr.20070524083513: ** g.Unit Tests
 # @+node:ekr.20210901071523.1: *3* g.run_coverage_tests
 def run_coverage_tests(module: str = '', filename: str = '') -> None:
@@ -6701,7 +6012,7 @@ def parsePathData(c: Cmdr) -> dict[str, str]:
     return d
 
 
-# @+node:sa.20260908160000.3: ** g.Mutable flags
+# @+node:sa.20260908190100.1: ** g.Mutable flags
 # unitTesting, inScript and the three host flags live in leo.leolib.state, so
 # that leolib can read them without importing this module. They are presented
 # here unchanged: g.unitTesting reads and writes work exactly as before.
@@ -6737,6 +6048,22 @@ for _flag in ('unitTesting', 'inScript', 'in_bridge', 'in_leo_server', 'in_vs_co
     globals()[_flag] = getattr(leoLibState, _flag)
 
 sys.modules[__name__].__class__ = _LeoGlobalsModule
+
+
+# @+node:sa.20260908170100.1: ** g.Install the reporting seam
+# util.es and util.es_error ask state for these rather than for g.app: a log
+# pane and a settings dictionary both belong to a running Leo, and the model
+# has neither. Installed at import, so anything that imports leoGlobals gets
+# Leo's real behaviour and no caller had to change.
+
+
+def _error_color_from_settings() -> str | None:
+    """The configured colour for errors, or None if nobody configured one."""
+    return g.app.config.getColor('log-error-color') if g.app and g.app.config else None
+
+
+leoLibState.log_sink = _es_to_log
+leoLibState.error_color_hook = _error_color_from_settings
 # @-others
 
 

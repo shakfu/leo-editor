@@ -121,6 +121,7 @@ __version__ = f"leoserver.py version {v1}.{v2}.{v3}"
 # @+<< leoserver globals >>
 # @+node:ekr.20220820160701.1: ** << leoserver globals >>
 g: Any = None  # The bridge's leoGlobals module.
+from leo.leolib import util  # noqa: E402  (g is set by the bridge; this is not)
 
 # Server defaults
 SERVER_STARTED_TOKEN = "LeoBridge started"  # Output when started successfully
@@ -980,8 +981,14 @@ class LeoServer:
         self.leoServerConfig: Param = None  # type:ignore
 
         # * Intercept Log Pane output: Sends to client's log pane
-        g.es = self._es  # type:ignore # pointer - not a function call
-        g.es_print = self._es  # type:ignore # Also like es, because es_print would double strings in client
+        # Rebind in leo.leolib.util too: these live there now and leoGlobals
+        # re-exports them, so patching only g.<name> would leave util's own
+        # callers -- error, warning, internalError -- writing to a log pane
+        # this process does not have. (state.log_sink is the tidier route for
+        # the es half; both names are patched here to keep es_print's stdout
+        # behaviour identical as well.)
+        g.es = util.es = self._es  # type:ignore # pointer - not a function call
+        g.es_print = util.es_print = self._es  # type:ignore # Also like es, because es_print would double strings in client
 
         # Set in _init_connection
         self.web_socket = None  # Main Control Client

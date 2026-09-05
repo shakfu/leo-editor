@@ -16,6 +16,8 @@ from typing import cast, Any, TYPE_CHECKING
 import zipfile
 import platform
 from leo.core import leoGlobals as g
+from leo.leolib import state as leoLibState
+from leo.leolib import util
 from leo.core import leoLanguageData
 from leo.core import leoPluginRegistry
 from leo.core import leoExternalFiles
@@ -152,7 +154,7 @@ class LeoApp:
         self.start_minimized = False  # For qt_frame plugin.
         self.trace_binding = ''  # The name of a binding to trace, or None.
         self.trace_setting = ''  # The name of a setting to trace, or None.
-        self.translateToUpperCase = False  # Never set to True.
+        # See the translateToUpperCase property, over leo.leolib.state.
         self.use_splash_screen = True  # True: put up a splash screen.
 
         # @-<< LeoApp: command-line arguments >>
@@ -749,6 +751,22 @@ class LeoApp:
     @property
     def c(self) -> Cmdr | None:
         return self.log and self.log.c
+
+    # @+node:sa.20260908190000.1: *3* app.translateToUpperCase property
+    @property
+    def translateToUpperCase(self) -> bool:
+        """
+        True: g.translateString upper-cases rather than translates.
+
+        Leo never sets it. It is a property over leo.leolib.state so that
+        util.translateString -- which every printed message passes through --
+        does not have to reach for g.app to answer it.
+        """
+        return leoLibState.translate_to_upper_case
+
+    @translateToUpperCase.setter
+    def translateToUpperCase(self, value: bool) -> None:
+        leoLibState.translate_to_upper_case = value
 
     # @+node:ekr.20171127111053.1: *3* app.Closing
     # @+node:ekr.20031218072017.2609: *4* app.closeLeoWindow
@@ -2405,8 +2423,13 @@ class LoadManager:
 
             def __init__(self, kind: str) -> None:
                 self.kind = kind
-                g.es_print = cast(Any, self.write)
-                g.pr = cast(Any, self.write)
+                # Rebind both names. These functions live in leo.leolib.util
+                # and leoGlobals re-exports them, so the two are separate
+                # bindings to one function: patching only g.<name> would leave
+                # util's own callers -- error, warning, internalError -- still
+                # printing to the stdout this class exists to replace.
+                g.es_print = util.es_print = cast(Any, self.write)
+                g.pr = util.pr = cast(Any, self.write)
 
             def flush(self, *args: Any, **keys: Any) -> None:
                 pass

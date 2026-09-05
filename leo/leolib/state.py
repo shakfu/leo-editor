@@ -27,6 +27,8 @@ through to this module, so no caller had to change. See the module-class
 properties at the end of leoGlobals.py.
 """
 
+from typing import Any
+
 # @+others
 # @+node:sa.20260908160000.2: ** state: the flags
 # True while Leo's unit tests are running. Guards anything that would touch
@@ -44,6 +46,33 @@ in_leo_server: bool = False
 
 # True when hosted by VS Code (#2098).
 in_vs_code: bool = False
+
+# @+node:sa.20260908160000.3: ** state: the reporting seam
+# Where log output goes, and what colour an error is.
+#
+# util.es puts a message "to the log pane", which is a thing only a running
+# editor has. Rather than have the model ask g.app for one -- the dependency
+# this whole refactor exists to remove -- it calls whatever is installed here.
+# leoGlobals installs Leo's real log writer as it loads, so inside Leo nothing
+# changes. With no host, log_sink is None and es is a no-op, which is what
+# leolib already did in effect: its minimal app has no gui and no log, so
+# every message ended up on a list nobody read.
+#
+# Note what does *not* go through the sink: es_print still prints to stdout,
+# so a library caller sees warnings and errors on the console.
+log_sink: Any = None
+
+# Returns the configured colour for errors, or None. Leo reads it from the
+# outline's settings; without a host, callers fall back to 'red'.
+error_color_hook: Any = None
+
+# True: util.translateString upper-cases everything instead of translating it.
+# A debugging aid that lives on g.app in Leo, where leoApp's own comment says
+# it is "never set to True". It is mirrored here because every printed message
+# goes through translateString, and that is not a path the model should be
+# reaching for the application on. LeoApp.translateToUpperCase is a property
+# over this name, so the two cannot drift.
+translate_to_upper_case: bool = False
 # @-others
 # @@language python
 # @@tabwidth -4
