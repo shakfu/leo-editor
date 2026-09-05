@@ -43,7 +43,7 @@ skipped items; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 899 tests, run headless, with and without Qt |
+| 0 — Safety net | **done** — 900 tests, passing against **real PyQt6** and with no Qt at all |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -60,7 +60,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 899 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 900 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -69,8 +69,9 @@ $ PYTHONPATH=. python3 -m leo.scripts.check_leo_sync
 LeoPyRef.leo is in sync with all mirrored files.
 ```
 
-The same suite passes unchanged with Qt present (15 skips instead of 23), so nothing was
-traded away to get here. Headless commander startup dropped from 0.22s to 0.04s, because
+The same suite passes against **real PyQt6** in the project's `.venv` -- 900 tests, only
+3 skips instead of 23, so every Qt-only test runs -- and the multi-view behaviour was
+driven through real Qt widgets and confirmed in the GUI by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
 importing Leo no longer imports Qt.
 
 ### What changed
@@ -152,7 +153,7 @@ document-level; selecting a sibling view's position is allowed.
   construct the Undoer.
 - `Outline.revalidate_views()` runs after every undo and redo. Any view whose current
   position no longer exists falls back to the nearest surviving ancestor, else the root;
-  views that did not act are asked to redraw, since nothing else would prompt them.
+  views that did not act are redrawn, since nothing else would prompt them.
   Before this, undoing an insert in one window left the other holding a Position into a
   deleted subtree — reproduced, then fixed, then pinned by a test that fails when the
   call is removed.
@@ -251,6 +252,25 @@ p.b" while the code read the widget. **The remaining 27 are mechanical**, listed
 `getAllText`/`setAllText`. They are a tidiness task now rather than a correctness one:
 with the model updated on every keystroke by `u.doTyping` and every view following its
 events, the widget and the model no longer disagree.
+
+**Verified against real Qt** (late in the work, once a PyQt6 `.venv` was available;
+everything before this had been checked only against the null gui or a fake-Qt shim):
+
+- The full suite: **900 tests, 3 skips** instead of 23.
+- Two views driven through real `QTextEdit`s: live body sync, folds diverging, undo from
+  either window, and a deleted node not stranding the other view's position.
+- **`open-second-view` crashed under real Qt**, and the cause was a latent Leo race my
+  feature made reachable. Adding a tab fires `LeoTabbedTopLevel.slotCurrentChanged`,
+  which calls `c.redraw()` while the frame is still being built. With a brand-new
+  outline `c.p` is empty so `redraw` returns early and nothing happens; a *second view*
+  starts with a populated outline, finds a real `c.p`, and dereferences
+  `c.frame.tree` before `finishCreate` has made one. Guarded, in the style of the three
+  `PR #4812` guards already in that slot.
+- **The stage 4 redraw question is answered: it was a real bug.** `c.redraw_later` only
+  sets a flag, and measurement showed Qt's event loop never drains it --
+  `processEvents()` left it set. A passive window really would have shown stale content
+  until clicked. `Outline.update_other_views` now flushes it at the end of a command and
+  after undo, and a test pins it.
 
 ### What is *not* fixed yet
 
