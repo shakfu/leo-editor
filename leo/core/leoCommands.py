@@ -295,7 +295,6 @@ class Commands:
         self.disableCommandsMessage = ''  # The presence of this message disables all commands.
         # One of three places that g.doHook looks for hook functions.
         self.hookFunction: Callable | None = None
-        self.ignoreChangedPaths = False  # True: disable path changed message in at.WriteAllHelper.
         self.inCommand = False  # Interlocks to prevent premature closing of a window.
         self.outlineToNowebDefaultFileName: str = "noweb.nw"  # For Outline To Noweb dialog.
         # For hoist/dehoist commands.
@@ -2051,6 +2050,14 @@ class Commands:
     @scanAtPathDirectivesCount.setter
     def scanAtPathDirectivesCount(self, n: int) -> None:
         self.outline.scanAtPathDirectivesCount = n
+
+    @property
+    def ignoreChangedPaths(self) -> bool:
+        return self.outline.ignoreChangedPaths
+
+    @ignoreChangedPaths.setter
+    def ignoreChangedPaths(self, val: bool) -> None:
+        self.outline.ignoreChangedPaths = val
 
     @property
     def ignored_at_file_nodes(self) -> list:

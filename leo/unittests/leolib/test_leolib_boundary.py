@@ -191,6 +191,53 @@ class TestLeolibBoundary(unittest.TestCase):
         self.assertEqual(leaks, '', f"a view module was needed: {leaks}")
         self.assertEqual(plugins, 0)
 
+    # @+node:sa.20260907110000.1: *3* TestLeolibBoundary.test_tangle_matches_disk
+    def test_tangle_matches_disk(self):
+        """
+        Tangling every external file of a real outline reproduces it byte for
+        byte.
+
+        The strongest statement of the write contract, and it costs nothing:
+        leolib.tangle returns text without touching the filesystem, so this
+        compares against leo-editor's own source tree with no risk of writing
+        to it.
+
+        Isolated in a subprocess, like the other checks here, and for a sharper
+        reason than usual: what a node tangles to depends on its language, and
+        g.app.language_delims_dict is process-global. Run in-process after the
+        rest of the suite, one @@language plain file came out with Python's
+        blackened sentinels ('# @+leo' instead of '#@+leo'). The writer is not
+        at fault -- it is right standalone and under LeoUnitTest -- but a
+        byte-for-byte assertion has no business depending on what earlier tests
+        left in a global table.
+        """
+        out = run_isolated(f"""
+            import os
+            from leo import leolib
+            outline = leolib.open_outline({LEO_PY_REF!r})
+            at = outline.atFileCommands
+            checked, differing = 0, []
+            for p in at.findFilesToRead(outline.rootPosition(), all=True):
+                if p.isAtAutoNode() or p.isAtShadowFileNode() or p.isAtJupytextNode():
+                    continue  # Not plain tangles; they have their own writers.
+                path = outline.fullPath(p)
+                if not os.path.exists(path):
+                    continue
+                with open(path, encoding='utf-8') as f:
+                    disk = f.read()
+                if leolib.tangle(outline, p) != disk:
+                    differing.append(p.h)
+                checked += 1
+            print('CHECKED', checked)
+            print('DIFFERING', '|'.join(differing))
+        """)
+        checked = int(out.split('CHECKED')[1].split('\n')[0].strip())
+        differing = out.split('DIFFERING')[1].split('\n')[0].strip()
+        self.assertGreater(checked, 300, 'the corpus did not load')
+        self.assertEqual(
+            differing, '', f"of {checked} files, these did not round-trip: {differing}"
+        )
+
     # @+node:sa.20260906110000.7: *3* TestLeolibBoundary.test_module_count_stays_small
     def test_module_count_stays_small(self):
         """
@@ -217,6 +264,84 @@ class TestLeolibApi(LeoUnitTest):
     """leolib's own behaviour, in-process."""
 
     # @+others
+    # @+node:sa.20260907110000.2: *3* TestLeolibApi.test_write_external_files
+    def test_write_external_files(self):
+        """
+        Writing an untouched outline must touch nothing; writing an edited one
+        must touch exactly what changed.
+
+        The no-op case is the one that matters. Tangling is destructive by
+        nature -- it regenerates the files a compiler reads -- so a writer that
+        rewrote everything on every call would churn timestamps, defeat build
+        caches, and turn any bug into a whole-tree corruption instead of a
+        single bad file.
+        """
+        from leo import leolib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, 'prog.py')
+            leo_file = os.path.join(tmp, 'x.leo')
+
+            outline = leolib.new_outline()
+            root = outline.rootPosition()
+            root.h = '@file prog.py'
+            root.b = '@language python\n@others\n'
+            child = root.insertAsLastChild()
+            child.h, child.b = 'main', 'def main():\n    return 1\n'
+            leolib.save(outline, leo_file)
+            self.assertEqual(leolib.write_external_files(outline), 1)
+            self.assertTrue(os.path.exists(src))
+            with open(src, encoding='utf-8') as f:
+                first = f.read()
+            self.assertIn('def main():', first)
+
+            # Nothing changed: nothing may be written.
+            reopened = leolib.open_outline(leo_file)
+            self.assertEqual(leolib.write_external_files(reopened), 0)
+            with open(src, encoding='utf-8') as f:
+                self.assertEqual(f.read(), first, 'a no-op write changed the file')
+
+            # One change: exactly one write, and it round-trips.
+            p = reopened.rootPosition().firstChild()
+            p.b = 'def main():\n    return 2\n'
+            self.assertEqual(leolib.write_external_files(reopened), 1)
+            with open(src, encoding='utf-8') as f:
+                self.assertIn('return 2', f.read())
+            again = leolib.open_outline(leo_file)
+            self.assertIn('return 2', again.rootPosition().firstChild().b)
+
+    # @+node:sa.20260907110000.3: *3* TestLeolibApi.test_write_at_clean_has_no_sentinels
+    def test_write_at_clean_has_no_sentinels(self):
+        """
+        An @clean file carries no sentinels, and reading it back recovers the
+        outline anyway.
+
+        This is the pair that makes Leo's external files interesting: tangle
+        produces a file with nothing Leo-specific in it, and the read side
+        recovers the node structure by diffing against a regenerated copy.
+        """
+        from leo import leolib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, 'clean.py')
+            leo_file = os.path.join(tmp, 'x.leo')
+            outline = leolib.new_outline()
+            root = outline.rootPosition()
+            root.h = '@clean clean.py'
+            root.b = '@language python\n@others\n'
+            child = root.insertAsLastChild()
+            child.h, child.b = 'body', 'x = 1\n'
+            leolib.save(outline, leo_file)
+            leolib.write_external_files(outline)
+            with open(src, encoding='utf-8') as f:
+                text = f.read()
+            self.assertIn('x = 1', text)
+            for marker in ('@+leo', '@+node', '@+others', '@@language'):
+                self.assertNotIn(marker, text, f"@clean file contains {marker}")
+            # And the outline survives a round trip through that bare file.
+            back = leolib.open_outline(leo_file)
+            self.assertIn('x = 1', ''.join(p.b for p in back.all_unique_positions()))
+
     # @+node:sa.20260906110000.9: *3* TestLeolibApi.test_open_outline
     def test_open_outline(self):
         from leo import leolib

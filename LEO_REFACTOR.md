@@ -158,19 +158,54 @@ read still leaves a correct-looking shape holding stale text; and
 `at.atFileToString` swallows the real exception in a bare `except Exception`.
 Only hashing each node's **body** exposed it. The test does that.
 
+### Writing `@file` trees
+
+Tangle: the outline is the source of truth, the external files are regenerated
+from it. This is what lets an outline be edited headless and have the result
+land in the files a compiler reads -- and it is the half of the `.leo` contract
+that a reimplementation would have to match.
+
+Almost nothing was needed. Fixing `initWriteIvars` for the `@clean` *read* path
+had already made the sentinel generator work without a window, so the writer
+came along with it. Only two things were in the way: `c.ignoreChangedPaths`
+moved to the `Outline`, and `at.promptForDangerousWrite` now **refuses** rather
+than guessing when there is no view -- there is nobody to answer "overwrite
+this?", and silently overwriting a file the outline did not read would be the
+worst possible default.
+
+- **`leolib.tangle(outline, p)`** returns a node's file text without touching
+  the filesystem. All **376** external files of `LeoPyRef.leo` -- 357 `@file`,
+  12 `@clean`, 7 `@edit` -- tangle byte-for-byte identical to what is on disk.
+- **`leolib.write_external_files(outline)`** writes, and Leo's own writer brings
+  its safeguards: a file whose regenerated contents are unchanged is not touched
+  at all, a backup precedes any replacement, and `@ignore` is honoured.
+
+Verified in a throwaway copy of the repo, because a wrong writer here rewrites
+leo-editor's own source: writing an untouched outline rewrote **0 files and
+changed 0 bytes**; editing one node in an `@file` tree and one in an `@clean`
+tree rewrote exactly those 2 files, with a one-line diff each and no sentinel
+churn; and three further read/write cycles rewrote nothing, so the operation is
+idempotent. The `@clean` output contains no sentinels and still reads back.
+
+That exercise found one more viewless crash in the *read* path --
+`readOneAtCleanNode` calling `c.setChanged(force=True)` -- which only fires when
+an `@clean` file differs from the outline, i.e. exactly the case an external
+edit produces.
+
 ### Still to do
 
 - **`leogui` / `leotui` / `leoweb` do not exist as packages.** `leo/tui` is the
   terminal front end and needs renaming; the Qt front end is spread across
   `leo/plugins/qt_*` and the Qt halves of `leoFrame`; `leoweb` is unstarted, with
   `leoserver` as the obvious seed.
-- **leolib reads `@file` trees but does not write them.** `leolib.save` writes
-  the `.leo` file only, deliberately: conflating external files would make a
-  headless save touch the user's source tree as a side effect. Writing is also
-  where `DefaultConfig` stops being obviously safe -- "no settings" is not
-  "Leo's shipped settings", and `leoSettings.leo` ships `@int page-width = 80`
-  against a code default of 132. Check any setting that can reach a file before
-  trusting it for writing.
+- **`leolib.write_external_files` does not write `@auto` or `@shadow` trees.**
+  Those have their own writers, and `@auto` needs the 36 importer/writer
+  plugins. `@file`, `@clean`, `@edit` and `@nosent` are covered.
+- **`DefaultConfig` is riskier for writing than for reading.** "No settings" is
+  not "Leo's shipped settings": `leoSettings.leo` ships `@int page-width = 80`
+  against a code default of 132. Nothing currently reachable from the writer
+  depends on it -- all 376 files round-trip byte for byte -- but check any
+  setting that can reach a file before adding to that surface.
 - **No commands yet.** `leo/tui` showed all 19 structural commands already work
   against a null frame, so they are view-agnostic in substance; what they are not
   is reachable without a commander.
@@ -190,7 +225,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 930 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
+| 0 — Safety net | **done** — 933 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -207,7 +242,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 930 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 933 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -222,7 +257,7 @@ All four CI gates pass, headless *and* under real PyQt6 via `uv run`:
 ruff check leo         All checks passed!
 ruff format --check    557 files already formatted
 ty check leo           All checks passed!
-run_ci_unit_tests.py   930 passed  (23 skips headless, 4 under Qt)
+run_ci_unit_tests.py   933 passed  (23 skips headless, 4 under Qt)
 check_leo_sync         LeoPyRef.leo is in sync
 ```
 

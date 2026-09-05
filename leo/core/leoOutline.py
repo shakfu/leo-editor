@@ -200,6 +200,9 @@ class Outline:
         # could not place. Facts about the files, not about a window; a front
         # end turns them into dialogs, and leolib just reads them.
         self.ignored_at_file_nodes: list[str] = []
+        # True: do not warn when an @<file> node's path has changed.
+        # Set around a reload; a fact about this document's files.
+        self.ignoreChangedPaths = False
         self.orphan_at_file_nodes: list[str] = []
 
         # Model state owned by the document.
@@ -983,11 +986,12 @@ class Outline:
     def shouldBeExpanded(self, p: Position) -> bool:
         return self.c.shouldBeExpanded(p)
 
-    def setChanged(self) -> None:
+    def setChanged(self, *, force: bool = False) -> None:
+        """Mark the document changed, and the window title with it."""
         if self.c is None:
-            self.changed = True  # No window to mark dirty.
+            self.changed = True  # No window whose title could say so.
             return
-        self.c.setChanged()
+        self.c.setChanged(force=force)
 
     def alert(self, message: str) -> None:
         if self.c is None:

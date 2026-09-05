@@ -40,12 +40,15 @@ Usage:
 # @+node:sa.20260906100000.2: ** << leolib imports >>
 from __future__ import annotations
 import os
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from leo.core import leoGlobals as g
 from leo.core import leoLanguageData
 from leo.core import leoNodes
 from leo.core.leoOutline import Outline
+
+if TYPE_CHECKING:  # pragma: no cover
+    from leo.core.leoNodes import Position
 
 # @-<< leolib imports >>
 
@@ -251,6 +254,53 @@ def read_external_files(outline: Outline) -> int:
     for p in at.findFilesToRead(outline.rootPosition(), all=True):
         p.v.clearDirty()
     return count
+
+
+# @+node:sa.20260907100000.1: ** leolib.write_external_files
+def write_external_files(outline: Outline, dirty_only: bool = False) -> int:
+    """
+    Write every @file, @clean, @edit and @nosent tree back to disk.
+
+    Tangle: the outline is the source of truth and the external files are
+    regenerated from it. The counterpart of read_external_files, and the half
+    of the .leo contract that lets an outline be edited headless and the
+    result land in the files a compiler sees.
+
+    Leo's own writer does the work, so the safeguards come with it: a file
+    whose regenerated contents are unchanged is not touched at all, so writing
+    an outline nobody edited is a no-op down to the mtimes; a backup is made
+    before any replacement; and @ignore is honoured. With no view there is
+    nobody to answer "overwrite this?", so at.promptForDangerousWrite refuses
+    rather than guessing -- a node whose path changed is skipped and reported.
+
+    Returns the number of files actually rewritten.
+    """
+    at = outline.atFileCommands
+    before = at.unchangedFiles
+    written_before = _count_files_to_write(at, outline)
+    at.writeAll(all=False, dirty=dirty_only)
+    # writeAll counts the files it left alone; the rest it rewrote.
+    return max(0, written_before - (at.unchangedFiles - before))
+
+
+def _count_files_to_write(at: Any, outline: Outline) -> int:
+    """How many @<file> trees writeAll will consider."""
+    files, _root = at.findFilesToWrite(False)
+    return len(files)
+
+
+# @+node:sa.20260907100000.2: ** leolib.tangle
+def tangle(outline: Outline, p: Position) -> str:
+    """
+    Return the text of p's external file, without writing anything.
+
+    The pure half of write_external_files: useful for checking what a write
+    would produce, and for a caller that wants the bytes rather than a file.
+    Sentinels are included only for the node kinds whose files carry them.
+    """
+    at = outline.atFileCommands
+    sentinels = bool(p.isAtFileNode() or p.isAtThinFileNode() or p.isAtShadowFileNode())
+    return at.atFileToString(p, sentinels=sentinels)
 
 
 # @+node:sa.20260906100000.8: ** leolib.to_xml

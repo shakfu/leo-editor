@@ -715,7 +715,7 @@ class AtFile:
         old_body = p.b
         p.b = g.toUnicode(s, encoding=encoding, reportErrors=True)
         if not c.isChanged() and p.b != old_body:
-            c.setChanged()
+            self.outline.setChanged()
         g.doHook('after-reading-external-file', c=c, p=p)
 
     # @+node:ekr.20070909100252: *5* at.readOneAtAutoNode
@@ -829,7 +829,7 @@ class AtFile:
 
         # Handle all changed vnodes.
         if changed_vnodes:
-            c.setChanged(force=True)
+            self.outline.setChanged(force=True)
             assert root.v
             root.v.setDirty()
             at.changed_roots.append(root.copy())
@@ -1488,10 +1488,10 @@ class AtFile:
         """
         raise OSError if p's path has changed *and* user forbids the write.
         """
-        at, c = self, self.c
+        at = self
 
         # Suppress this message during save-as and save-to commands.
-        if c.ignoreChangedPaths:
+        if self.outline.ignoreChangedPaths:
             return  # pragma: no cover
         oldPath = g.os_path_normcase(at.getPathUa(p))
         newPath = g.os_path_normcase(self.outline.fullPath(p))
@@ -3349,6 +3349,11 @@ class AtFile:
     def promptForDangerousWrite(self, fileName: str, message: str = '') -> bool:
         """Raise a dialog asking the user whether to overwrite an existing file."""
         at, c, root = self, self.c, self.root
+        if c is None:
+            # leolib: there is no user to ask. Overwriting a file the outline
+            # did not read would be the worst possible default, so refuse.
+            g.es_print(f"not overwriting (no view to confirm with): {fileName}")
+            return False
         if at.cancelFlag:
             assert at.canCancelFlag
             return False
