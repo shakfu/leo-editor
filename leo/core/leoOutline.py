@@ -217,6 +217,24 @@ class Outline:
             signal_manager.connect(self, signal, c.on_model_outline_changed)
         signal_manager.connect(self, 'bulk_changed', c.on_model_bulk_changed)
 
+    # @+node:sa.20260905200000.1: *3* outline.update_other_views
+    def update_other_views(self, acting_c: Cmdr = None) -> None:
+        """
+        Flush pending redraws in every view except the one that just acted.
+
+        c.redraw_later only sets a flag; the flag is drained by that view's own
+        c.outerUpdate, which runs when its user does something. For the window
+        that made the change that is fine, but a *passive* window would sit
+        showing stale content until it was clicked. Measured: Qt's event loop
+        does not drain it -- processEvents leaves the flag set.
+
+        Safe at this point: outerUpdate only moves focus when the view asked
+        for it, and a passive view has not.
+        """
+        for c in self.views:
+            if c is not acting_c and c.exists and c.requestLaterRedraw:
+                c.outerUpdate()
+
     # @+node:sa.20260905160100.1: *3* outline.revalidate_views
     def revalidate_views(self, acting_c: Cmdr = None) -> None:
         """
@@ -260,6 +278,7 @@ class Outline:
                 c.setCurrentPosition(found)
                 # Do not redraw from inside the change: ask for one afterwards.
                 c.redraw_later()
+        self.update_other_views(acting_c=acting_c)
 
     # @+node:sa.20260905160200.1: *3* outline.c
     @property

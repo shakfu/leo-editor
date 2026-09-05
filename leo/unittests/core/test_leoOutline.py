@@ -207,8 +207,8 @@ class TestOutline(LeoUnitTest):
         self.assertEqual(c2.frame.body.wrapper.getAllText(), 'before')
 
     # @+node:sa.20260905160400.1: *3* TestOutline.test_other_views_are_asked_to_redraw
-    def test_other_views_are_asked_to_redraw(self):
-        """A change made in one window must not leave the others showing it stale."""
+    def test_other_views_are_redrawn_after_undo(self):
+        """An undo in one window must not leave the others showing it stale."""
         c = self.c
         c.rootPosition().h = 'root'
         c2 = self.second_view()
@@ -222,8 +222,11 @@ class TestOutline(LeoUnitTest):
         c2.requestLaterRedraw = False
         with u.acting_view(c2):
             u.undo()
-        self.assertTrue(c.requestLaterRedraw)  # The view that did not act.
-        self.assertFalse(c2.requestLaterRedraw)  # The acting view redrew itself.
+        # Both views are up to date: the acting one redrew itself, and the
+        # passive one was drained by Outline.update_other_views rather than
+        # being left holding a flag nothing would act on.
+        self.assertFalse(c.requestLaterRedraw)
+        self.assertFalse(c2.requestLaterRedraw)
 
     # @+node:sa.20260905160300.5: *3* TestOutline.test_interleaved_undo_groups_are_detected
     def test_interleaved_undo_groups_are_detected(self):
@@ -595,6 +598,26 @@ class TestOutline(LeoUnitTest):
         self.assertEqual(c.getBodyText(c.rootPosition().lastChild()), 'other body')
         c.setBodyText('changed', p=c.rootPosition().lastChild())
         self.assertEqual(c.rootPosition().lastChild().b, 'changed')
+
+    # @+node:sa.20260905200100.1: *3* TestOutline.test_passive_views_are_drawn_not_just_flagged
+    def test_passive_views_are_drawn_not_just_flagged(self):
+        """
+        A window that did not act must actually repaint, not just be flagged.
+
+        c.redraw_later only sets requestLaterRedraw. Measured under real Qt:
+        the event loop does not drain it -- a passive window showed stale
+        content until it was clicked.
+        """
+        c = self.c
+        c.rootPosition().h = 'root'
+        c2 = self.second_view()
+        c.requestLaterRedraw = False
+        c2.requestLaterRedraw = False
+        with c.outline.acting_view(c2):
+            p = c2.rootPosition().insertAsLastChild()
+            p.h = 'added by the second view'
+            c.outline.revalidate_views(acting_c=c2)
+        self.assertFalse(c.requestLaterRedraw, 'the passive view was left undrawn')
 
     # @+node:sa.20260905150000.12: *3* TestOutline.test_removing_a_view
     def test_removing_a_view(self):

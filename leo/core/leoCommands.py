@@ -3433,6 +3433,10 @@ class Commands:
                             # view knows yet, and one of them may be sitting on
                             # a node this command deleted.
                             c.outline.revalidate_views(acting_c=c)
+                        else:
+                            # Cheap: a headline or status change leaves other
+                            # views holding an undrained redraw request.
+                            c.outline.update_other_views(acting_c=c)
                 except Exception:
                     g.es_exception()
                     return_value = None

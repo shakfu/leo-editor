@@ -4538,6 +4538,13 @@ class TabbedFrameFactory:
         if f is None:
             return  # PR #4812
         c = f.c
+        if not c.frame or not c.frame.tree:
+            # The frame is still being built: adding its tab fired this slot
+            # before LeoFrame.finishCreate created the tree. Redrawing now
+            # crashes. Reachable via open-second-view, whose commander already
+            # has a populated outline, so c.redraw finds a real c.p instead of
+            # returning early the way a brand-new outline does.
+            return
         title = c.computeWindowTitle()
         tabw.setWindowTitle(title)
         # Don't do this: it would break --minimize.
