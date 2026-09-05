@@ -24,6 +24,7 @@ See LEO_REFACTOR.md for the staged plan this belongs to.
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 from leo.core import signal_manager
+from leo.core import leoGlobals as g
 
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
@@ -317,6 +318,40 @@ class Outline:
 
         return _ActingView()
 
+    # @+node:sa.20260905250002.1: *3* outline: owned by the document
+    # These used to forward to the primary view. They are here because they
+    # need nothing but state this object already owns -- the hidden root and
+    # the file name -- so the commander now forwards to *them*, which is the
+    # direction the coupling is meant to run.
+
+    def positionExists(
+        self, p: Position | None, root: Position | None = None, trace: bool = False
+    ) -> bool:
+        """Return True if position p exists in this outline."""
+        if not p or not p.v:
+            return False
+        rstack = root.stack + [(root.v, root._childIndex)] if root else []
+        pstack = p.stack + [(p.v, p._childIndex)]
+        if len(rstack) > len(pstack):
+            return False
+        par = self.hiddenRootNode
+        for j, x in enumerate(pstack):
+            if j < len(rstack) and x != rstack[j]:
+                return False
+            v, i = x
+            if i >= len(par.children) or v is not par.children[i]:
+                return False
+            par = v
+        return True
+
+    def shortFileName(self) -> str:
+        return g.shortFileName(self.mFileName)
+
+    def setHeadString(self, p: Position, s: str) -> None:
+        """Set p's headline. Every view follows the head_changed event."""
+        p.initHeadString(s)
+        p.setDirty()
+
     # @+node:sa.20260905130000.7: *3* outline: forwarded to the primary view
     # Everything below still lives on the commander. Each one is a call site
     # that stages 4-6 of LEO_REFACTOR.md move to the document or to the views;
@@ -330,9 +365,6 @@ class Outline:
     def rootPosition(self) -> Position:
         return self.c.rootPosition()
 
-    def positionExists(self, p: Position, root: Position = None) -> bool:
-        return self.c.positionExists(p, root)
-
     def createNodeHierarchy(
         self, heads: list, parent: Position = None, forcecreate: bool = False
     ) -> Position:
@@ -341,9 +373,6 @@ class Outline:
     def fileName(self) -> str:
         # Owned outright: the document knows its own name.
         return self.mFileName
-
-    def shortFileName(self) -> str:
-        return self.c.shortFileName()
 
     def getLanguage(self, p: Position) -> str:
         return self.c.getLanguage(p)
@@ -381,9 +410,6 @@ class Outline:
 
     def setBodyString(self, p: Position, s: str) -> None:
         self.c.setBodyString(p, s)
-
-    def setHeadString(self, p: Position, s: str) -> None:
-        self.c.setHeadString(p, s)
 
     def shouldBeExpanded(self, p: Position) -> bool:
         return self.c.shouldBeExpanded(p)

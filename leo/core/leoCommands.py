@@ -1704,7 +1704,7 @@ class Commands:
         return self.mRelativeFileName or self.mFileName
 
     def shortFileName(self) -> str:
-        return g.shortFileName(self.mFileName)
+        return self.outline.shortFileName()
 
     shortFilename = shortFileName
 
@@ -2072,24 +2072,9 @@ class Commands:
         self, p: Position | None, root: Position | None = None, trace: bool = False
     ) -> bool:
         """Return True if a position exists in c's tree"""
-        if not p or not p.v:
-            return False
-
-        rstack = root.stack + [(root.v, root._childIndex)] if root else []
-        pstack = p.stack + [(p.v, p._childIndex)]
-
-        if len(rstack) > len(pstack):
-            return False
-
-        par = self.hiddenRootNode
-        for j, x in enumerate(pstack):
-            if j < len(rstack) and x != rstack[j]:
-                return False
-            v, i = x
-            if i >= len(par.children) or v is not par.children[i]:
-                return False
-            par = v
-        return True
+        # Whether a position exists is a fact about the document, not about
+        # this window: every view of an outline must answer it identically.
+        return self.outline.positionExists(p, root, trace)
 
     # @+node:ekr.20160427153457.1: *6* c.dumpPosition
     def dumpPosition(self, p: Position) -> None:
@@ -2529,13 +2514,12 @@ class Commands:
 
         This is used in by unit tests to restore the outline.
         """
-        p.initHeadString(s)
-        p.setDirty()
-        # No c.frame.tree.setHeadline here any more. initHeadString emits
-        # head_changed, and every view -- this one included -- follows it in
-        # c.on_model_head_changed. Calling the tree directly would also
-        # overwrite a headline the user is in the middle of editing, which the
-        # event path is careful not to do.
+        # The document does this now. There is no c.frame.tree.setHeadline
+        # here any more either: initHeadString emits head_changed, and every
+        # view -- this one included -- follows it in c.on_model_head_changed.
+        # Calling the tree directly would also overwrite a headline the user
+        # is in the middle of editing, which the event path is careful not to.
+        self.outline.setHeadString(p, s)
 
     # @+node:ekr.20060109164136: *5* c.setLog
     def setLog(self) -> None:

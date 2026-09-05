@@ -43,7 +43,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 919 tests, passing against **real PyQt6** and with no Qt at all |
+| 0 — Safety net | **done** — 920 tests, passing against **real PyQt6** and with no Qt at all |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -60,7 +60,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 919 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 920 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -75,7 +75,7 @@ and the multi-view behaviour was driven through real Qt widgets and confirmed in
 by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
 importing Leo no longer imports Qt.
 
-The nine tests added since, for the headline half of stage 6, have run headless only.
+The ten tests added since, for the headline half of stage 6, have run headless only.
 Two of them turn on `LeoQtTree`'s new `begin_edit_headline` bookkeeping, which no
 headless test can reach: **re-run the suite under Qt, and edit a headline by hand in two
 windows, before trusting that part.**
@@ -413,10 +413,20 @@ and `--dump` prints one frame for use in a pipe.
   with Qt; the events it needs are now live. (Worth a look while you are in there: its
   idle handler walks `c.all_unique_positions()` on every tick, per open window.)
 
-`Outline` currently forwards 25 attributes and methods to its acting view. That list is
-deliberately explicit rather than a `__getattr__`, because it *is* the remaining
-coupling: `grep 'self.c' leo/core/leoOutline.py` is the to-do list for stage 6, and it
-should only ever get shorter.
+`Outline` currently forwards **22** attributes and methods to its acting view, down from
+25. That list is deliberately explicit rather than a `__getattr__`, because it *is* the
+remaining coupling: `grep 'self.c' leo/core/leoOutline.py` is the to-do list for stage 6,
+and it should only ever get shorter.
+
+Three came off it with the headline work, and the direction matters more than the count:
+`positionExists`, `shortFileName` and `setHeadString` are now *implemented* on the
+`Outline` and forwarded to from `Commands`, rather than the reverse. Each needs nothing
+but the hidden root and the file name, both of which the document already owns — and
+`setHeadString` only became a pure model write when its `c.frame.tree` call went away.
+Each also has exactly one right answer per document: a second view must not be able to
+disagree with the first about whether a position exists. Measured on an 11,350-node load
+of `LeoPyRef.leo`, the extra hop costs nothing (0.37s either way, and a three-pass
+`positionExists` sweep of the whole outline is 0.056s either way).
 
 ### Deviations from the plan below
 

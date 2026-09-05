@@ -584,6 +584,41 @@ class TestOutline(LeoUnitTest):
             w.setAllText = original
         self.assertEqual(calls, [], 'the acting view repainted its own widget')
 
+    # @+node:sa.20260905250003.1: *3* TestOutline.test_document_operations_are_owned_by_the_outline
+    def test_document_operations_are_owned_by_the_outline(self):
+        """
+        Some questions have one answer per *document*, not one per window.
+
+        These three were forwarded from the Outline to its primary view, which
+        is backwards: the commander should ask the document. Every view must
+        get the same answer, including a view that is not the primary one.
+        """
+        c = self.c
+        root = c.rootPosition()
+        root.h = 'root'
+        c2 = self.second_view()
+        outline = c.outline
+
+        # Whether a position exists is a fact about the tree.
+        p = c.rootPosition()
+        self.assertTrue(outline.positionExists(p))
+        self.assertTrue(c.positionExists(p))
+        self.assertTrue(c2.positionExists(p))
+        gone = p.insertAsLastChild()
+        gone.doDelete()
+        self.assertFalse(outline.positionExists(gone))
+        self.assertFalse(c2.positionExists(gone))
+
+        # So is the document's name.
+        self.assertEqual(c.shortFileName(), outline.shortFileName())
+        self.assertEqual(c2.shortFileName(), outline.shortFileName())
+
+        # And setting a headline is a model write that every view follows.
+        outline.setHeadString(c.rootPosition(), 'renamed by the document')
+        self.assertEqual(c2.rootPosition().h, 'renamed by the document')
+        w2 = c2.frame.tree.headline_wrapper(c2.rootPosition())
+        self.assertEqual(w2.getAllText(), 'renamed by the document')
+
     # @+node:sa.20260905240100.1: *3* TestOutline.test_headline_syncs_live_between_views
     def test_headline_syncs_live_between_views(self):
         """
