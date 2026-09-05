@@ -238,9 +238,19 @@ below: `p.script` and `mod_scripting`'s five `source_c=p.v.context` sites both h
 outline; it works now. **A type checker found statically what the earlier audit found
 only by crashing.**
 
-What still has no automated cover: `LeoQtTree.begin_edit_headline` is unreachable from
-any headless test, and the Qt-only tests that do run do not open two windows. **Edit a
-headline by hand, in two windows, before trusting that part.**
+**Confirmed by hand in the running Qt app** by the fork's owner: adding a headline,
+editing it, editing a body with correct syntax highlighting, and saving. That covers more
+than it sounds like. It is the only thing that reaches `LeoQtTree.begin_edit_headline`,
+since `headline_wrapper` returns a widget only while a real `QLineEdit` is open. Correct
+highlighting is the evidence that moving `getLanguage` and `getDelims` onto the `Outline`
+was sound -- the colorizer asks for the language on every repaint. And a successful save
+exercises `putGlobals`, `put_v_elements` and `setCachedBits`, all of which were changed
+to work without a window and had only been checked without one.
+
+What is still unverified is **two windows on one outline**: no headless test can open
+them, and the Qt tests that run do not. The specific thing to try is the one the headline
+half of stage 6 exists to fix -- rename a node in window A, then click it in window B and
+commit without typing. It must not revert.
 
 ### What changed
 
