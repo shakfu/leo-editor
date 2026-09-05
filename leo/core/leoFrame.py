@@ -878,6 +878,9 @@ class LeoTree:
         self.edit_text_dict: dict[VNode, tuple[Position, Widget]] = {}
         # "public" ivars: correspond to setters & getters.
         self.drag_p = None
+        # The node whose headline is being edited, or None. Only a real edit
+        # may be committed by endEditLabel: see the comment there.
+        self.editing_p: Position | None = None
         self.generation = 0  # low-level vnode methods increment this count.
         self.redrawCount = 0  # For traces
         self.use_chapters = False  # May be overridden in subclasses.
@@ -1108,6 +1111,20 @@ class LeoTree:
     # @+node:ekr.20040803072955.126: *4* LeoTree.endEditLabel
     def endEditLabel(self) -> None:
         """End editing of a headline and update p.h."""
+        if self.editing_p is None:
+            # Nothing was being edited, so there is nothing to commit.
+            #
+            # Committing anyway is a real bug, not just waste: onHeadChanged
+            # takes the new headline from headline_wrapper(p) rather than from
+            # p.h, so any code that renamed the node through the model leaves
+            # that widget stale. c.endEditing runs at the top of u.undo, and a
+            # stale widget there makes Leo record a headline change that the
+            # user never made -- which pushes an undo bead and silently eats
+            # the next undo. LeoQtTree.endEditLabel already returns early when
+            # there is no editor; the base class did not, so the fault only
+            # showed up in non-Qt views.
+            return
+        self.editing_p = None
         # Important: this will redraw if necessary.
         self.onHeadChanged(self.c.p)
 
@@ -1617,6 +1634,7 @@ class NullTree(LeoTree):
     ) -> tuple[Widget, StringTextWrapper] | None:
         """Start editing p's headline."""
         self.endEditLabel()
+        self.editing_p = p.copy() if p else None
         if p:
             wrapper = StringTextWrapper(c=self.c, name='head-wrapper')
             e = None
