@@ -135,6 +135,7 @@
 <v t="sa.20260905130000.1"><vh>@file leoOutline.py</vh></v>
 <v t="sa.20260908130000.1"><vh>@file ../leolib/__init__.py</vh></v>
 <v t="sa.20260906100000.1"><vh>@file ../leolib/api.py</vh></v>
+<v t="sa.20260908140000.1"><vh>@file ../leolib/util.py</vh></v>
 <v t="sa.20260905210000.1"><vh>@file ../tui/__init__.py</vh></v>
 <v t="sa.20260905210100.1"><vh>@file ../tui/model.py</vh></v>
 <v t="sa.20260905210200.1"><vh>@file ../tui/screen.py</vh></v>
@@ -589,6 +590,7 @@
 <v t="sa.20260905150000.1"><vh>@file ../unittests/core/test_leoOutline.py</vh></v>
 <v t="sa.20260905210400.1"><vh>@file ../unittests/misc_tests/test_tui.py</vh></v>
 <v t="sa.20260906110000.1"><vh>@file ../unittests/leolib/test_leolib_boundary.py</vh></v>
+<v t="sa.20260908150000.1"><vh>@file ../unittests/leolib/test_leolib_util.py</vh></v>
 <v t="ekr.20210908171733.1"><vh>@file ../unittests/core/test_leoPersistence.py</vh></v>
 <v t="ekr.20220911163718.1"><vh>@file ../unittests/core/test_leoQt6.py</vh></v>
 <v t="ekr.20210902055206.1"><vh>@file ../unittests/core/test_leoRst.py</vh></v>

@@ -120,6 +120,10 @@ class _MinimalApp:
         self.scriptResult: Any = None
         # at.putOpenLeoSentinel asks. Leo's own default.
         self.force_at_auto_sentinels = False
+        # at.putRefLine asks when a << section >> has no node behind it.
+        # False means "that is an error", which is Leo's default and the only
+        # answer a library can give: there is no one to ask.
+        self.allow_undefined_refs = False
         self.debug_dict: dict[str, Any] = {}
         self.loadDir = g.os_path_dirname(g.os_path_abspath(leoNodes.__file__))
         # The @auto dispatch tables. Filled on first use, not here: an @auto
