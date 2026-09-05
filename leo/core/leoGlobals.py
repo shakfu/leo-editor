@@ -27,6 +27,7 @@ from pathlib import Path
 import re
 import shlex
 import sys
+import types
 import subprocess
 import tempfile
 import textwrap
@@ -55,6 +56,7 @@ StringIO = io.StringIO
 # The app-independent half of this module now lives in leo.leolib.util:
 # every name below is defined there and re-exported here, so g.<name>
 # keeps working unchanged. See that module's docstring, and TODO.md.
+from leo.leolib import state as leoLibState
 from leo.leolib.util import (  # noqa: F401
     Bunch,
     CheckVersion,
@@ -274,9 +276,6 @@ if TYPE_CHECKING:  # pragma: no cover
 # @-<< leoGlobals: annotations >>
 # @+<< leoGlobals: global constants >>
 # @+node:ekr.20240515093718.1: ** << leoGlobals: global constants >>
-in_bridge: bool = False  # True: leoApp object loads a null Gui by default.
-in_leo_server: bool = False
-in_vs_code: bool = False  # #2098.
 # @-<< leoGlobals: global constants >>
 # @+<< define g.globalDirectiveList >>
 # @+node:EKR.20040610094819: ** << define g.globalDirectiveList >>
@@ -502,8 +501,6 @@ tree_popup_handlers: list[Callable] = []  # Set later.
 app: LeoApp = None  # type:ignore # There seems to be no way to init g.app here.
 
 # Global status vars.
-inScript: bool = False  # A synonym for app.inScript
-unitTesting: bool = False  # A synonym for app.unitTesting.
 
 
 # @+others
@@ -6704,7 +6701,44 @@ def parsePathData(c: Cmdr) -> dict[str, str]:
     return d
 
 
+# @+node:sa.20260908160000.3: ** g.Mutable flags
+# unitTesting, inScript and the three host flags live in leo.leolib.state, so
+# that leolib can read them without importing this module. They are presented
+# here unchanged: g.unitTesting reads and writes work exactly as before.
+#
+# A module *class* rather than a module __getattr__: __getattr__ only fires for
+# names a module does not have, so the first `g.unitTesting = True` would put
+# the name in this module's dict and shadow state from then on. A property is a
+# data descriptor, so it intercepts the assignment too.
+
+
+class _LeoGlobalsModule(types.ModuleType):
+    """leoGlobals' module type. See the note above."""
+
+
+def _proxy_flag(name: str) -> property:
+    def get(self: types.ModuleType) -> Any:
+        return getattr(leoLibState, name)
+
+    def set_(self: types.ModuleType, value: Any) -> None:
+        setattr(leoLibState, name, value)
+
+    return property(get, set_)
+
+
+for _flag in ('unitTesting', 'inScript', 'in_bridge', 'in_leo_server', 'in_vs_code'):
+    setattr(_LeoGlobalsModule, _flag, _proxy_flag(_flag))
+    # Also leave the name in this module's dict, where it is never read: the
+    # property is a data descriptor, so it wins for both get and set. It is
+    # there for tools that ask whether the attribute is 'local' before they
+    # patch it. unittest.mock does, and when the answer is no it *deletes* the
+    # attribute to undo a patch -- which a property has no deleter for, and
+    # which would be the wrong thing anyway.
+    globals()[_flag] = getattr(leoLibState, _flag)
+
+sys.modules[__name__].__class__ = _LeoGlobalsModule
 # @-others
+
 
 if __name__ == '__main__':
     unittest.main()  # pragma: no cover
