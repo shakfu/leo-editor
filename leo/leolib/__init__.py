@@ -16,15 +16,18 @@ All three can open, create, edit, view and save .leo files, and none of them is
 privileged: leolib must never import any of them, and `test_leolib_boundary`
 fails the build if it does.
 
-What this buys, measured: opening leo/core/LeoPyRef.leo through leoBridge
-imports 99 leo modules, 9 of which are view modules (leoFrame, leoGui, leoKeys,
-leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground). Opening the
-same file through leolib.open_outline imports 6, and none of them is a view.
+What this buys, measured: opening leo/core/LeoPyRef.leo through leoBridge puts
+102 leo.* entries in sys.modules, 9 of them view modules (leoFrame, leoGui,
+leoKeys, leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground).
+Opening the same file through leolib.open_outline, reading every one of its 376
+external files, puts in 11, and none of them is a view.
 
 Status: this is the seam, not the finished package. The modules still live in
 leo/core; leolib names the subset that is view-free and holds the line with a
-test. Moving the files is a later, purely mechanical step -- and one worth
-doing only once the boundary has stopped moving.
+test. That makes the boundary a test result rather than a structural fact, and
+it flatters the module count: leoGlobals is not a view-free module, only one
+whose view-touching functions leolib never calls. TODO.md section 3 has the
+three steps, in dependency order, that would make this a package.
 
 Usage:
 

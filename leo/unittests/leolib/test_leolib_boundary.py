@@ -286,7 +286,7 @@ class TestLeolibBoundary(unittest.TestCase):
         """
         A ratchet, not a law of nature.
 
-        Opening a .leo file through leoBridge imports about 99 leo modules.
+        Opening a .leo file through leoBridge imports about 100 leo modules.
         Through leolib it is a handful. The number is asserted loosely -- the
         point is that it cannot quietly climb back toward the commander stack.
         """

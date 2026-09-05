@@ -15,10 +15,13 @@ leolib                the model and its machinery. No view, ever.
 ```
 
 **Where it stands.** `leolib` exists and can open, create, edit, view and save
-`.leo` files, including every `@<file>` directive, importing 11 leo modules and
-no view module (against 99 and 9 through `leoBridge`). None of the three front
-ends uses it yet. 935 tests pass headless and under real PyQt6; `ruff`, `ty` and
-`check_leo_sync` are clean.
+`.leo` files, including every `@<file>` directive. Opening `LeoPyRef.leo` and
+reading all 376 of its external files puts 11 `leo.*` entries in `sys.modules`,
+none of them a view module; the same file through `leoBridge` puts in 102, nine
+of them views. But `leolib` is still a facade over `leo/core` rather than a
+package of its own — see section 3. None of the three front ends uses it yet.
+935 tests pass headless and under real PyQt6; `ruff`, `ty` and `check_leo_sync`
+are clean.
 
 ---
 
@@ -65,7 +68,50 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 
 ---
 
-## 3. Finish `leolib`
+## 3. Make `leolib` a package, not a facade
+
+`leo/leolib/__init__.py` is one file that defines no model code. `Outline`,
+`VNode`, `Position`, the readers and the writers all still live in `leo/core`.
+What the file actually contributes is `_MinimalApp` — a stand-in for `g.app`
+carrying the gnx allocator, the language tables and the hook guards — plus lazy
+`@auto` dispatch tables and a seven-function API.
+
+That was deliberate. The expensive part of this refactor was the dependency
+edges, not the file layout; moving files first would have made every later diff
+unreviewable against upstream Leo and broken `check_leo_sync` while the boundary
+was still moving. But it leaves the seam enforced by a test rather than by
+structure, and nothing stops a caller from importing `leo.core.leoOutline`
+directly and bypassing it.
+
+It also makes "imports no view module" weaker than it sounds. `leoGlobals` is
+8,974 lines with 13 references to `g.app.gui`; they sit in functions `leolib`
+never calls, so the import graph looks clean while the dependency is still
+there. A full open + read-all-external + serialize uses **38 of its 389
+functions**. The other 90% comes along for the ride.
+
+In dependency order:
+
+- [ ] **Move the gnx allocator off `g.app` and onto the `Outline`.**
+      `VNode.__init__` reaches through `g.app.nodeIndices`, and that single
+      dependency is the whole reason `_MinimalApp` has to exist — without it a
+      library cannot make a node. gnx allocation is document-level and belongs
+      on the outline. `leoNodes` has carried a comment asking for this for
+      years: *"To make VNode's independent of Leo's core, wrap all calls to the
+      VNode ctor."* Land this and most of `_MinimalApp` evaporates.
+- [ ] **Split `leoGlobals`.** The elephant, and the reason the boundary is not
+      yet structural. Extract the ~40 functions the model needs, and have
+      `leoGlobals` re-export them so nothing upstream breaks. Do it *before* the
+      move, not after: it is the step that decides which files the move can
+      take, and it is where the real work is.
+- [ ] **`git mv` the modules into `leo/leolib/`.** Mechanical, and worth doing
+      only once the two steps above have landed. `check_leo_sync` pairs
+      `leo/core/*.py` against nodes in `LeoPyRef.leo`, so it changes in the same
+      commit. Until then the layout is honest about what it is: a named subset,
+      held in place by `test_leolib_boundary`.
+
+---
+
+## 4. Finish `leolib`
 
 - [ ] **Three `Outline` members still require a view**: `p`, `shouldBeExpanded`,
       `createNodeHierarchy`. Of 32 members exercised against an outline with no
@@ -75,12 +121,6 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 - [ ] **No commands are reachable without a commander.** `leo/tui` showed all 19
       structural commands already work against a null frame, so they are
       view-agnostic in substance; they are simply not callable from `leolib`.
-- [ ] **The gnx allocator still lives on `g.app`.** `VNode.__init__` reaches
-      through `g.app.nodeIndices`, which is why `leolib` must install a minimal
-      app at all. It is document-level and belongs on the `Outline`. `leoNodes`
-      has carried a comment asking for this for years:
-      *"To make VNode's independent of Leo's core, wrap all calls to the VNode
-      ctor."*
 - [ ] **`DefaultConfig` is riskier for writing than for reading.** "No settings"
       is not "Leo's shipped settings": `leoSettings.leo` ships
       `@int page-width = 80` against a code default of 132. Nothing the writer
@@ -89,7 +129,7 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 
 ---
 
-## 4. Conformance corpus (for a future `leolib-rs`)
+## 5. Conformance corpus (for a future `leolib-rs`)
 
 If the model is reimplemented in Rust, the Python `leolib` becomes an executable
 specification and the oracle to test against. Two properties already exist in
@@ -126,7 +166,7 @@ specification and the oracle to test against. Two properties already exist in
 
 ---
 
-## 5. Known-deferred, with reasons
+## 6. Known-deferred, with reasons
 
 Not oversights — each was investigated and left deliberately.
 
@@ -149,7 +189,7 @@ Not oversights — each was investigated and left deliberately.
 
 ---
 
-## 6. Risks to keep in view
+## 7. Risks to keep in view
 
 - **Out-of-tree plugins that use `v.context` as a commander will break.** Stage 3
   changed `VNode.context` from a commander to an `Outline`, and `Outline` has no
