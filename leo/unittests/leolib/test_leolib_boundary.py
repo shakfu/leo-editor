@@ -14,6 +14,7 @@ the wrong reason.
 """
 # @+<< test_leolib_boundary imports >>
 # @+node:sa.20260906110000.2: ** << test_leolib_boundary imports >>
+import json
 import os
 import subprocess
 import sys
@@ -121,6 +122,70 @@ class TestLeolibBoundary(unittest.TestCase):
             self.assertEqual(bodies, 'root body|child body')
             self.assertEqual(leaks, '', f"a view module was needed: {leaks}")
 
+    # @+node:sa.20260906170000.1: *3* TestLeolibBoundary.test_external_files_match_full_leo
+    def test_external_files_match_full_leo(self):
+        """
+        Reading @file trees headless must give exactly what Leo gives.
+
+        Compared by hashing each node's headline *and body*, keyed by gnx.
+        Counting nodes is not enough and neither is counting children: an
+        @clean node stores its whole tree in the .leo file, so a failed
+        external read still leaves a correct-looking shape with stale text.
+        That is exactly how twelve files were silently not being read while
+        two weaker checks both passed.
+        """
+        out = run_isolated(f"""
+            import hashlib, json, sys
+            from leo import leolib
+            o = leolib.open_outline({LEO_PY_REF!r})
+            d = {{p.gnx: hashlib.sha1((p.h + chr(0) + p.b).encode()).hexdigest()
+                 for p in o.all_unique_positions()}}
+            print('LIB', json.dumps(d))
+        """)
+        lib = json.loads(out.split('LIB', 1)[1].strip())
+
+        out = run_isolated(f"""
+            import sys; sys.argv = ['x']
+            import hashlib, json
+            from leo.core import leoBridge
+            b = leoBridge.controller(
+                gui='nullGui', loadPlugins=False, readSettings=False,
+                silent=True, verbose=False)
+            c = b.openLeoFile({LEO_PY_REF!r})
+            d = {{p.gnx: hashlib.sha1((p.h + chr(0) + p.b).encode()).hexdigest()
+                 for p in c.all_unique_positions()}}
+            print('LEO', json.dumps(d))
+        """)
+        leo = json.loads(out.split('LEO', 1)[1].strip())
+
+        self.assertEqual(len(lib), len(leo))
+        self.assertEqual(set(lib) - set(leo), set(), 'nodes leolib invented')
+        self.assertEqual(set(leo) - set(lib), set(), 'nodes leolib missed')
+        differing = [k for k in lib if lib[k] != leo[k]]
+        self.assertEqual(differing, [], f"{len(differing)} nodes differ in text")
+
+    # @+node:sa.20260906170000.2: *3* TestLeolibBoundary.test_reading_externals_stays_view_free
+    def test_reading_externals_stays_view_free(self):
+        """Reading every external file of a real outline must import no view."""
+        out = run_isolated(f"""
+            import sys
+            from leo import leolib
+            o = leolib.open_outline({LEO_PY_REF!r})
+            view = {VIEW_MODULES!r}
+            leaks = [m for m in sys.modules
+                     if m.startswith('leo.') and any(k in m for k in view)]
+            print('NODES', sum(1 for _ in o.all_unique_positions()))
+            print('LEAKS', ','.join(sorted(leaks)))
+            print('PLUGINS', len([m for m in sys.modules
+                                  if m.startswith('leo.plugins')]))
+        """)
+        nodes = int(out.split('NODES')[1].split('\n')[0].strip())
+        leaks = out.split('LEAKS')[1].split('\n')[0].strip()
+        plugins = int(out.split('PLUGINS')[1].split('\n')[0].strip())
+        self.assertGreater(nodes, 10000, 'the external files were not read')
+        self.assertEqual(leaks, '', f"a view module was needed: {leaks}")
+        self.assertEqual(plugins, 0)
+
     # @+node:sa.20260906110000.7: *3* TestLeolibBoundary.test_module_count_stays_small
     def test_module_count_stays_small(self):
         """
@@ -130,10 +195,10 @@ class TestLeolibBoundary(unittest.TestCase):
         Through leolib it is a handful. The number is asserted loosely -- the
         point is that it cannot quietly climb back toward the commander stack.
         """
-        out = run_isolated("""
+        out = run_isolated(f"""
             import sys
             from leo import leolib
-            leolib.open_outline('leo/core/LeoPyRef.leo')
+            leolib.open_outline({LEO_PY_REF!r})
             print('COUNT', len([m for m in sys.modules if m.startswith('leo.')]))
         """)
         count = int(out.split('COUNT')[1].split('\n')[0].strip())

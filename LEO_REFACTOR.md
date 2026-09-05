@@ -54,15 +54,18 @@ separate *place*: the modules still live in `leo/core`, and leolib names the
 subset of them that is view-free. Moving the files is mechanical and worth doing
 only once the boundary has stopped moving. The boundary is the real artifact.
 
-**Measured.** Opening `leo/core/LeoPyRef.leo`:
+**Measured.** Opening `leo/core/LeoPyRef.leo`, including every `@file` and
+`@clean` tree it refers to:
 
-| via | leo modules imported | view modules among them |
-|---|---|---|
-| `leoBridge` + null gui | 99 | **9** — leoFrame, leoGui, leoKeys, leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground |
-| `leolib.open_outline` | **7** | **0** |
+| via | leo modules imported | view modules among them | nodes |
+|---|---|---|---|
+| `leoBridge` + null gui | 99 | **9** — leoFrame, leoGui, leoKeys, leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground | 11,386 |
+| `leolib.open_outline` | **11** | **0** | **11,386** |
 
-A full round trip -- create, edit, save, reopen, edit, save -- stays at 7 and 0.
-Files written by leolib open in Leo and vice versa; that is checked both ways.
+The two outlines are **byte-identical**: same gnxs, same headlines, same bodies,
+checked by hashing `h + b` for every node. A full round trip -- create, edit,
+save, reopen, edit, save -- imports 7 modules and no view. Files written by
+leolib open in Leo and vice versa; that is checked both ways.
 
 Two of the 99 numbers deserve a footnote, because the first reading of them was
 wrong. 36 of the modules are `leo/plugins/importers/*` and `leo/plugins/writers/*`
@@ -118,22 +121,65 @@ since long before any of this work:
 That allocator is document-level and should end up on the `Outline`. It is the
 next thing to move.
 
+### Reading `@file` trees
+
+Without this leolib returned a shell: a `.leo` file stores only the outline's
+own nodes, so `LeoPyRef.leo` is 530 nodes without its external files and 11,386
+with. `leolib.open_outline` reads them by default.
+
+- **`AtFile`, `FastAtRead` and `ShadowController` take an `Outline`**, the same
+  normalization `VNode.__init__` uses. `self.c` is a property for the parts that
+  want a window and is `None` when leolib drives.
+- **The directive scanners moved to the `Outline`**: `getLanguage`, `getDelims`,
+  `getEncoding`, `getLineEnding`, `getPageWidth`, `getTabWidth`, `getWrap`, and
+  the `@path` family. Scanning the tree for these is document work -- two
+  windows on one outline must not disagree about what language a node is in --
+  and `at.initWriteIvars` bailed out with `if not c or not c.config: return ''`,
+  which is what actually kept external files unreadable without a window.
+- **`Outline.DefaultConfig`** answers with the caller's default. Every
+  `config.getBool` in `leoAtFile` already passes an explicit `default=`, so this
+  is not a stub: it is what Leo does when a setting is unset. It raises on a
+  setting it does not know rather than guessing, which is how it caught its own
+  first bug -- `new_leo_file_encoding = 'UTF-8'` where Leo uses `'utf-8'`,
+  enough to change the XML declaration of every file leolib wrote.
+- **`leo/core/leoLanguageData.py`** holds the three language dicts that were
+  defined inline in `LeoApp` -- comment delimiters and file extensions, 192 +
+  179 + 148 entries, verified identical after the move. They are model data:
+  the readers need to know a `.py` file is Python with no application running.
+- **View-only calls degrade rather than fail.** `endEditing`, the error
+  dialogs, `redraw` and `selectPosition` are no-ops on an outline with no
+  window; `alert` prints.
+
+**A note on how this was verified, because the first two checks were wrong.**
+Node counts matched (11,386 = 11,386) and so did the child counts of all 375
+`@file` nodes -- while twelve files were silently not being read at all. An
+`@clean` node stores its whole tree *in* the `.leo` file, so a failed external
+read still leaves a correct-looking shape holding stale text; and
+`at.atFileToString` swallows the real exception in a bare `except Exception`.
+Only hashing each node's **body** exposed it. The test does that.
+
 ### Still to do
 
 - **`leogui` / `leotui` / `leoweb` do not exist as packages.** `leo/tui` is the
   terminal front end and needs renaming; the Qt front end is spread across
   `leo/plugins/qt_*` and the Qt halves of `leoFrame`; `leoweb` is unstarted, with
   `leoserver` as the obvious seed.
-- **leolib cannot yet read or write `@file` nodes.** `leolib.save` writes the
-  `.leo` file only, deliberately: conflating external files would make a headless
-  save touch the user's source tree as a side effect. `leoAtFile` scores 0
-  `c.frame` and 1 `g.app.gui`, so it should come across easily -- and it is what
-  the 36 importer/writer plugins hang off.
+- **leolib reads `@file` trees but does not write them.** `leolib.save` writes
+  the `.leo` file only, deliberately: conflating external files would make a
+  headless save touch the user's source tree as a side effect. Writing is also
+  where `DefaultConfig` stops being obviously safe -- "no settings" is not
+  "Leo's shipped settings", and `leoSettings.leo` ships `@int page-width = 80`
+  against a code default of 132. Check any setting that can reach a file before
+  trusting it for writing.
 - **No commands yet.** `leo/tui` showed all 19 structural commands already work
   against a null frame, so they are view-agnostic in substance; what they are not
   is reachable without a commander.
-- **`Outline` still forwards 18 members to a commander.** That list is the
-  remaining coupling and the to-do list.
+- **Four `Outline` members still require a view**: `frame`, `p`,
+  `shouldBeExpanded` and `createNodeHierarchy`. Of 32 members exercised against
+  an outline with no view, those are the only ones that raise; everything else
+  either answers from the document or degrades deliberately. `frame` and `p` are
+  the honest ones -- there is no window and no selected node -- so the real
+  remainder is small.
 
 ---
 
@@ -144,7 +190,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 928 tests with no Qt at all; 910 of them last run against **real PyQt6** |
+| 0 — Safety net | **done** — 930 tests with no Qt at all; 910 of them last run against **real PyQt6** |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -161,7 +207,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 928 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 930 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted

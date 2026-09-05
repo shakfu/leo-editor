@@ -310,7 +310,6 @@ class Commands:
     def initDebugIvars(self) -> None:
         """Init Commander debugging ivars."""
         self.command_count = 0
-        self.scanAtPathDirectivesCount = 0
         self.trace_focus_count = 0
 
     # @+node:ekr.20120217070122.10471: *5* c.initDocumentIvars
@@ -447,16 +446,16 @@ class Commands:
         # Define 11 subcommanders.
         self.keyHandler = self.k    = leoKeys.KeyHandlerClass(c)
         self.chapterController      = leoChapters.ChapterController(c)
-        self.shadowController       = leoShadow.ShadowController(c)
+        self.outline.shadowController = leoShadow.ShadowController(c.outline)
         # c.fileCommands is a property forwarding to c.outline.fileCommands:
         # one reader/writer, and so one gnx index, per *document*. Creating it
         # here per commander gave two views of one outline two gnx dicts.
         self.outline.fileCommands   = leoFileCommands.FileCommands(c.outline)
         self.findCommands           = leoFind.LeoFind(c)
-        self.atFileCommands         = leoAtFile.AtFile(c)
+        self.outline.atFileCommands = leoAtFile.AtFile(c.outline)
         self.importCommands         = leoImport.LeoImportCommands(c)
         self.markupCommands         = leoMarkup.MarkupCommands(c)
-        self.persistenceController  = leoPersistence.PersistenceDataController(c)
+        self.outline.persistenceController = leoPersistence.PersistenceDataController(c)
         self.printingController     = leoPrinting.PrintingController(c)
         self.undoer                 = leoUndo.Undoer(c) if c.owns_outline else c.outline.undoer
 
@@ -1752,252 +1751,43 @@ class Commands:
         oldSel = i, j
         return head, lines, tail, oldSel, oldYview  # string,list,string,tuple,int.
 
-    # @+node:ekr.20250405040620.1: *5* c.getDelims
-    # Use a regex to avoid allocating temp strings.
-    at_comment_pattern = re.compile(r'^@comment\s+(.*)$', re.MULTILINE)
+    # @+node:sa.20260906160000.1: *5* c: directive scanners (moved to the Outline)
+    # Scanning the tree for the @language, @comment, @encoding, @tabwidth,
+    # pagewidth, wrap and lineending directives is document work: the answer
+    # comes from directives in the tree
+    # and the outline's own settings, and every view of an outline must agree.
+    # It lived here, which is why reading an external file needed a window:
+    # at.initWriteIvars returned early with no commander, so leolib produced an
+    # empty sentinel round-trip for every @clean node and reported the file as
+    # invalid. See LEO_REFACTOR.md.
 
     def getDelims(self, p: Position) -> tuple[str, str, str]:
-        c = self
-        # The headline has higher precedence because it is more visible.
-        for p2 in p.self_and_parents():
-            for s in (p2.h, p2.b):
-                for m in c.at_comment_pattern.finditer(s):
-                    comment = m.group(1)
-                    return g.set_delims_from_string(comment)
-
-        # Return the default comment delims.
-        default_language = c.getLanguage(p) or c.target_language or 'python'
-        return g.set_delims_from_language(default_language)
-
-    # @+node:ekr.20250404072805.1: *5* c.getEncoding
-    # Use a regex to avoid allocating temp strings.
-    at_encoding_pattern = re.compile(r'^@encoding\s+([\w_-]+)', re.MULTILINE)
+        return self.outline.getDelims(p)
 
     def getEncoding(self, p: Position) -> str:
-        """
-        Scan p and all ancestors for the first @encoding direcive.
+        return self.outline.getEncoding(p)
 
-        Return c.config.default_derived_file_encoding or 'utf-8' by default.
-        """
-        c = self
-        # The headline has higher precedence because it is more visible.
-        for p2 in p.self_and_parents():
-            for s in (p2.h, p2.b):
-                for m in c.at_encoding_pattern.finditer(s):
-                    encoding = m.group(1)
-                    if g.isValidEncoding(encoding):
-                        return encoding
-                    g.error("invalid @encoding:", encoding)
-        return c.config.default_derived_file_encoding or 'utf-8'
-
-    # @+node:ekr.20250405141653.1: *5* c.getLanguage
     def getLanguage(self, p: Position) -> str:
-        """
-        Return the language in effect at node p, checking that the language is valid."""
-        v0 = p.v
-        assert v0
-        assert p.v
-        seen: set[VNode]
-
-        # The same generator as in v.setAllAncestorAtFileNodesDirty.
-        # Original idea by Виталије Милошевић (Vitalije Milosevic).
-        # Modified by EKR.
-
-        def v_and_parents(v: VNode) -> VNodeGenerator:
-            if v in seen:
-                return
-            seen.add(v)
-            yield v
-            for parent_v in v.parents:
-                if parent_v not in seen:
-                    yield from v_and_parents(parent_v)
-
-        # First, see if p contains any @language directive.
-        if language := g.findFirstValidAtLanguageDirective(p.b):
-            return language
-
-        # Passes 1 and 2: Search body text for unambiguous @language directives.
-
-        # Pass 1: Search body text in direct parents for unambiguous @language directives.
-        for p2 in p.self_and_parents(copy=False):
-            languages = g.findAllValidLanguageDirectives(p2.v.b)
-            if len(languages) == 1:  # An unambiguous language
-                return languages[0]
-
-        # Pass 2: Search body text in extended parents for unambiguous @language directives.
-        seen = set([v0.context.hiddenRootNode])
-        for v in v_and_parents(v0):
-            languages = g.findAllValidLanguageDirectives(v.b)
-            if len(languages) == 1:  # An unambiguous language
-                return languages[0]
-
-        # Passes 3 & 4: Use the file extension in @<file> nodes.
-
-        def get_language_from_headline(v: VNode) -> str:
-            """Return the extension for @<file> nodes."""
-            if v.isAnyAtFileNode():
-                name = v.anyAtFileNodeName()
-                _, ext = g.os_path_splitext(name)
-                ext = ext[1:]  # strip the leading period.
-                language = g.app.extension_dict.get(ext, '')
-                if g.isValidLanguage(language):
-                    return language
-            return ''
-
-        # Pass 3: Use file extension in headline of @<file> in direct parents.
-        for p2 in p.self_and_parents(copy=False):
-            if language := get_language_from_headline(p2.v):
-                return language
-
-        # Pass 4: Use file extension in headline of @<file> nodes in extended parents.
-        seen = set([v0.context.hiddenRootNode])
-        for v in v_and_parents(v0):
-            assert v
-            if language := get_language_from_headline(v):
-                return language
-
-        # Return the default language for the commander.
-        c = p.v.context
-        return c.target_language or 'python'
-
-    # @+node:ekr.20250405053842.1: *5* c.getLineEnding
-    # Use a regex to avoid allocating temp strings.
-    at_lineending_pattern = re.compile(r'^@lineending\s+([\w]+)', re.MULTILINE)
+        return self.outline.getLanguage(p)
 
     def getLineEnding(self, p: Position) -> str:
-        """
-        Scan p and all ancestors for the first @lineending direcive.
-        Return None (*not* '\n') by default.
-        """
-        c = self
-        # The headline has higher precedence because it is more visible.
-        for p2 in p.self_and_parents():
-            for s in (p2.h, p2.b):
-                for m in c.at_lineending_pattern.finditer(s):
-                    ending = m.group(1)
-                    if ending in ("cr", "crlf", "lf", "nl", "platform"):
-                        return g.getOutputNewline(name=ending)
-        return ''
-
-    # @+node:ekr.20250404153234.1: *5* c.getPageWidth
-    # Use a regex to avoid allocating temp strings.
-    at_pagewidth_pattern = re.compile(r'^@pagewidth\s+(-?[0-9]+)', re.MULTILINE)
+        return self.outline.getLineEnding(p)
 
     def getPageWidth(self, p: Position) -> int:
-        """
-        Scan p.b and all ancestors for the first @pagewith direcive.
-
-        Return c.page_width by default.
-        """
-        c = self
-        # The headline has higher precedence because it is more visible.
-        for p2 in p.self_and_parents():
-            for s in (p2.h, p2.b):
-                for m in c.at_pagewidth_pattern.finditer(s):
-                    width = m.group(1)
-                    try:
-                        return int(width)
-                    except ValueError:
-                        g.error("ignoring m.group(0)")
-        return c.page_width
-
-    # @+node:ekr.20250404021710.1: *5* c.getPath & helper
-    def getPath(self, p: Position) -> str:
-        """
-        Scan for @path directives in p and all its direct ancestors.
-
-        Return an absolute path or a reasonable default.
-        """
-        c = self
-        paths = []
-        for p2 in p.self_and_parents():
-            if path := c.getPathFromNode(p2):
-                paths.append(path)
-
-        # Add absbase and reverse the list.
-        absbase = g.os_path_dirname(c.fileName()) if c.fileName() else g.app.homeDir
-        paths.append(absbase)
-        paths.reverse()
-
-        # Compute the full, effective, absolute path.
-        path = g.finalize_join(*paths)
-        return path
-
-    # @+node:ekr.20250404014820.1: *6* c.getPathFromNode
-    # Use a regex to avoid allocating temp strings.
-    # https://en.wikipedia.org/wiki/Filename
-    at_path_pattern = re.compile(r'^@path\s+(.+)$', re.MULTILINE)
-
-    def getPathFromNode(self, p: Position) -> str | None:
-        """
-        Scan p.h then p.b for @path directives.
-        """
-        c = self
-        c.scanAtPathDirectivesCount += 1  # An important statistic.
-
-        def get_path(m: re.Match) -> str | None:
-            return g.stripPathCruft(m.group(1)) if m else None
-
-        # The headline has higher precedence because it is more visible.
-        paths: list[str] = []
-        for kind, s in (('head', p.h), ('body', p.b)):
-            for m in c.at_path_pattern.finditer(s):
-                if kind == 'body' and p.isAtFileNode():
-                    message = '@path is not allowed in the body text of @file nodes\n'
-                    g.print_unique_message(message)
-                elif path := get_path(m):
-                    paths.append(path)
-            if paths:
-                break
-        if len(paths) > 1:
-            message = (
-                f"Multiple @path directives in {p.h!r}\n"
-                f"Using the first path: @path {paths[0]}"
-            )  # fmt: skip
-            g.print_unique_message(message)
-        return paths[0] if paths else None
-
-    # @+node:ekr.20250404153250.1: *5* c.getTabWidth
-    # Use a regex to avoid allocating temp strings.
-    at_tabwidth_pattern = re.compile(r'^@tabwidth\s+(-?[0-9]+)', re.MULTILINE)
+        return self.outline.getPageWidth(p)
 
     def getTabWidth(self, p: Position) -> int:
-        """
-        Scan p.b and all ancestors for the first @encoding direcive.
-
-        Return c.tab_width by default.
-        """
-        c = self
-        # The headline has higher precedence because it is more visible.
-        for p2 in p.self_and_parents():
-            for s in (p2.h, p2.b):
-                for m in c.at_tabwidth_pattern.finditer(s):
-                    width = m.group(1)
-                    try:
-                        return int(width)
-                    except ValueError:
-                        g.error("ignoring m.group(0)")
-        return c.tab_width
-
-    # @+node:ekr.20250405143421.1: *5* c.getWrap
-    # Use a regex to avoid allocating temp strings.
-    at_wrap_pattern = re.compile(r'^@wrap', re.MULTILINE)
-    at_nowrap_pattern = re.compile(r'^@nowrap', re.MULTILINE)
+        return self.outline.getTabWidth(p)
 
     def getWrap(self, p: Position) -> int:
-        """
-        Scan p.b and all ancestors for @wrap and @nowrap directives.
-        Return @bool body-pane-wraps by default.
-        """
-        c = self
-        # The headline has higher precedence because it is more visible.
-        for p2 in p.self_and_parents():
-            for s in (p2.h, p2.b):
-                if c.at_wrap_pattern.search(s) is not None:
-                    return True
-                if c.at_nowrap_pattern.search(s) is not None:
-                    return False
-        return c.config.getBool("body-pane-wraps")
+        return self.outline.getWrap(p)
+
+    def getPath(self, p: Position) -> str:
+        return self.outline.getPath(p)
+
+    def getPathFromNode(self, p: Position) -> str | None:
+        return self.outline.getPathFromNode(p)
+
 
     # @+node:ekr.20040803112200: *5* c.is...Position
     # @+node:ekr.20040803155551: *6* c.currentPositionIsRootPosition
@@ -2254,6 +2044,42 @@ class Commands:
     @property
     def mod_time_cache(self) -> dict[str, float]:
         return self.outline.mod_time_cache
+
+    @property
+    def scanAtPathDirectivesCount(self) -> int:
+        return self.outline.scanAtPathDirectivesCount
+
+    @scanAtPathDirectivesCount.setter
+    def scanAtPathDirectivesCount(self, n: int) -> None:
+        self.outline.scanAtPathDirectivesCount = n
+
+    @property
+    def ignored_at_file_nodes(self) -> list:
+        return self.outline.ignored_at_file_nodes
+
+    @ignored_at_file_nodes.setter
+    def ignored_at_file_nodes(self, aList: list) -> None:
+        self.outline.ignored_at_file_nodes = aList
+
+    @property
+    def orphan_at_file_nodes(self) -> list:
+        return self.outline.orphan_at_file_nodes
+
+    @orphan_at_file_nodes.setter
+    def orphan_at_file_nodes(self, aList: list) -> None:
+        self.outline.orphan_at_file_nodes = aList
+
+    @property
+    def atFileCommands(self) -> Any:
+        return self.outline.atFileCommands
+
+    @property
+    def shadowController(self) -> Any:
+        return self.outline.shadowController
+
+    @property
+    def persistenceController(self) -> Any:
+        return self.outline.persistenceController
 
     @property
     def fileCommands(self) -> Any:
@@ -3105,16 +2931,12 @@ class Commands:
         Return the path to an external file if p is an @<file> node.
         Otherwise the return the path to the enclosing directory.
         """
-        c = self
-        path = c.getPath(p)
-        return g.finalize_join(path, p.anyAtFileNodeName())
+        return self.outline.fullPath(p)
 
     # @+node:ekr.20250616161500.1: *4* c.relativeDirectory
     def relativeDirectory(self, path: str) -> str:
         """Return the path relative to this outline, or the full, absolute path."""
-        c = self
-        baseDir = os.path.dirname(c.fileName())
-        return g.relativeDirectory(baseDir, path)
+        return self.outline.relativeDirectory(path)
 
     # @+node:ekr.20171123135625.39: *4* c.getTime
     def getTime(self, body: bool = True) -> str:
@@ -3163,9 +2985,7 @@ class Commands:
     # @+node:ekr.20090103070824.9: *4* c.setFileTimeStamp
     def setFileTimeStamp(self, fn: str) -> None:
         """Update the timestamp for fn.."""
-        # c = self
-        if g.app.externalFilesController:
-            g.app.externalFilesController.set_time(fn)
+        self.outline.setFileTimeStamp(fn)
 
     # @+node:ekr.20031218072017.3000: *4* c.updateSyntaxColorer
     def updateSyntaxColorer(self, p: Position) -> None:
@@ -4408,8 +4228,8 @@ class Commands:
     def init_error_dialogs(self) -> None:
         c = self
         g.app.syntax_error_files = []
-        c.ignored_at_file_nodes = []
-        c.orphan_at_file_nodes = []
+        c.outline.ignored_at_file_nodes = []
+        c.outline.orphan_at_file_nodes = []
 
     # @+node:ekr.20171123135805.1: *5* c.notValidInBatchMode
     def notValidInBatchMode(self, commandName: str) -> None:

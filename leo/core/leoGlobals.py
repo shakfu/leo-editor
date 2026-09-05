@@ -3850,8 +3850,11 @@ def fullPath(c: Cmdr, p: Position) -> str:
     Otherwise the return the path to the enclosing directory.
 
     Neither the path nor the fileName will be created if it does not exist.
+
+    Takes an Outline or a commander: where a node's file lives is a document
+    fact, and callers that hold only a VNode have an Outline in v.context.
     """
-    return c.fullPath(p)
+    return getattr(c, 'outline', c).fullPath(p)
 
 
 # @+node:ekr.20190327192721.1: *3* g.get_files_in_directory

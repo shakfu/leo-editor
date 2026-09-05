@@ -44,7 +44,9 @@ class AtFile:
     # @+node:ekr.20250403114721.1: *3* << AtFile: define __slots__ >>
     __slots__ = (  # noqa  # Leave unsorted.
         # Ivars.
-        'c',
+        # 'c' is a property, not a slot: this holds the document, and reaches
+        # for a window only where it needs one. See at.__init__.
+        'outline',
         'fileCommands',
         # Basic status vars.
         'errors',
@@ -116,11 +118,18 @@ class AtFile:
     # @+node:ekr.20041005105605.8: *4* at.ctor & helpers
     # Note: g.getScript also call the at.__init__ and at.finishCreate().
 
-    def __init__(self, c: Cmdr) -> None:
-        """ctor for atFile class."""
+    def __init__(self, context: Outline | Cmdr) -> None:
+        """
+        Ctor for the AtFile class.
+
+        Takes an Outline or a commander, normalized as VNode.__init__ does it.
+        Reading and writing external files is a document operation; self.c is
+        for the parts that want a window -- dialogs, focus, redraws -- and is
+        None when leolib is driving.
+        """
         # Ivars.
-        self.c: Cmdr = c
-        self.fileCommands = c.fileCommands
+        self.outline: Outline = getattr(context, 'outline', context)
+        self.fileCommands = self.outline.fileCommands
         # Basic status vars.
         self.errors = 0
         self.language: str = ''
@@ -153,9 +162,12 @@ class AtFile:
         self.encoding = 'utf-8'
         self.explicitLineEnding = False
         self.force_newlines_in_at_nosent_bodies = False
-        self.output_newline = g.getOutputNewline(c=c)
+        # From the document's settings, which are Leo's defaults when this
+        # outline has no view to carry any.
+        self.output_newline = g.getOutputNewline(
+            name=self.outline.config.getString('output-newline'))
         self.page_width = 0
-        self.tab_width = c.tab_width or -4
+        self.tab_width = self.outline.tab_width or -4
         # User switches: set in reloadSettings.
         self.beautifyOnWrite = False
         self.checkPythonCodeOnWrite = False
@@ -164,14 +176,20 @@ class AtFile:
         # Initialize all user switches.
         self.reloadSettings()
 
+    @property
+    def c(self) -> Cmdr:
+        """The view to act on, or None when this outline has no view at all."""
+        return self.outline.c
+
     # @+node:ekr.20171113152939.1: *5* at.reloadSettings
     def reloadSettings(self) -> None:
         """AtFile.reloadSettings"""
         c = self.c
-        self.beautifyOnWrite = c.config.getBool('beautify-python-code-on-write', default=False)
-        self.checkPythonCodeOnWrite = c.config.getBool('check-python-code-on-write', default=True)
-        self.runRuffOnWrite = c.config.getBool('run-ruff-on-write', default=False)
-        self.runTyOnWrite = c.config.getBool('run-ty-on-write', default=False)
+        config = self.outline.config
+        self.beautifyOnWrite = config.getBool('beautify-python-code-on-write', default=False)
+        self.checkPythonCodeOnWrite = config.getBool('check-python-code-on-write', default=True)
+        self.runRuffOnWrite = config.getBool('run-ruff-on-write', default=False)
+        self.runTyOnWrite = config.getBool('run-ty-on-write', default=False)
 
     # @+node:ekr.20250403154610.1: *4* at.initAllIvars
     def initAllIvars(self, root: Position) -> None:
@@ -180,7 +198,7 @@ class AtFile:
         assert root, g.callers()
         # Basic status vars.
         at.errors = 0
-        at.language = c.target_language or 'python'
+        at.language = self.outline.target_language or 'python'
         at.root = root
         # Reading
         at.importRootSeen = False
@@ -200,13 +218,13 @@ class AtFile:
         at.targetFileName = ''
         # at.unchangedFiles = 0  # Only at.writeAll should init this ivar.
         # User settings.
-        at.at_auto_encoding = c.config.default_at_auto_file_encoding or 'utf-8'
-        at.encoding = c.config.default_derived_file_encoding or 'utf-8'
+        at.at_auto_encoding = self.outline.config.default_at_auto_file_encoding or 'utf-8'
+        at.encoding = self.outline.config.default_derived_file_encoding or 'utf-8'
         at.explicitLineEnding = False
         at.force_newlines_in_at_nosent_bodies = False
         at.output_newline = g.getOutputNewline(c=c)
-        at.page_width = c.page_width or 132
-        at.tab_width = c.tab_width or -4
+        at.page_width = self.outline.page_width or 132
+        at.tab_width = self.outline.tab_width or -4
 
     # @+node:ekr.20041005105605.13: *4* at.initReadIvars
     def initReadIvars(self, root: Position, fileName: str) -> None:
@@ -221,11 +239,15 @@ class AtFile:
         Compute default values of all write-related ivars.
         Return the finalized name of the output file.
         """
-        at, c = self, self.c
-        if not c or not c.config:
+        at = self
+        # Asked of the *document*: this used to return '' whenever there was no
+        # commander, which left at.root unset and made the whole @clean
+        # sentinel round-trip produce nothing. An outline always has settings,
+        # falling back to Leo's defaults when it has no window to carry any.
+        if not self.outline.config:
             return ''
 
-        make_dirs = c.config.getBool('create-nonexistent-directories', default=False)
+        make_dirs = self.outline.config.getBool('create-nonexistent-directories', default=False)
         assert at.checkPythonCodeOnWrite is not None
 
         # Set all ivars to reasonable defaults.
@@ -233,22 +255,23 @@ class AtFile:
 
         # Set other ivars.
         at.sentinels = True
-        at.force_newlines_in_at_nosent_bodies = c.config.getBool(
+        at.force_newlines_in_at_nosent_bodies = self.outline.config.getBool(
             'force-newlines-in-at-nosent-bodies'
         )
         # For at.putBody only.
 
-        at.encoding = c.getEncoding(root)
-        lineending = c.getLineEnding(root)
+        at.encoding = self.outline.getEncoding(root)
+        lineending = self.outline.getLineEnding(root)
         at.explicitLineEnding = bool(lineending)
         if g.unitTesting:
             at.output_newline = '\n'
         else:
-            at.output_newline = lineending or g.getOutputNewline(c=c)
-        at.language = c.getLanguage(root)
+            at.output_newline = lineending or g.getOutputNewline(
+                name=self.outline.config.getString('output-newline'))
+        at.language = self.outline.getLanguage(root)
         at.outputList = []  # For stream output.
-        at.page_width = c.getPageWidth(root)
-        at.tab_width = c.getTabWidth(root)
+        at.page_width = self.outline.getPageWidth(root)
+        at.tab_width = self.outline.getTabWidth(root)
         # More complex inits.
         at.initSentinelComments(root)
 
@@ -257,7 +280,7 @@ class AtFile:
             at.root.v._p_changed = True
 
         # #1907: Compute the file name and create directories as needed.
-        targetFileName = g.os_path_realpath(c.fullPath(root))
+        targetFileName = g.os_path_realpath(self.outline.fullPath(root))
         at.targetFileName = targetFileName  # For at.writeError only.
 
         # targetFileName can be empty for unit tests & @command nodes.
@@ -288,7 +311,7 @@ class AtFile:
     def initSentinelComments(self, root: Position) -> None:
         """Init at.startSentinelComment and at.endSentinelComment."""
         at, c = self, self.c
-        delim1, delim2, delim3 = c.getDelims(root)
+        delim1, delim2, delim3 = self.outline.getDelims(root)
 
         # Use single-line comments if we have a choice.
         # delim1,delim2,delim3 now correspond to line,start,end
@@ -320,7 +343,7 @@ class AtFile:
         if not p.isAtFileNode() and not p.isAtThinFileNode():
             g.red('Please select an @thin or @file node')
             return
-        fn = c.fullPath(p)  # #1910.
+        fn = self.outline.fullPath(p)  # #1910.
         if not g.os_path_exists(fn):
             g.red(f"file not found: {fn}")
             return
@@ -332,7 +355,7 @@ class AtFile:
         # Create a dummy, unconnected, VNode as the root.
         root_v = leoNodes.VNode(context=c)
         root = leoNodes.Position(root_v)
-        FastAtRead(c, gnx2vnode={}).read_into_root(s, fn, root)
+        FastAtRead(self.outline, gnx2vnode={}).read_into_root(s, fn, root)
 
     # @+node:ekr.20250724123631.1: *5* at.openAtLeoFile
     @cmd('open-at-leo-file')
@@ -347,7 +370,7 @@ class AtFile:
         if not p.isAtLeoNode():
             g.red('Please select an @leo node')
             return
-        path = c.fullPath(p)
+        path = self.outline.fullPath(p)
         if g.os_path_exists(path):
             g.openWithFileName(path, old_c=c)
         else:
@@ -371,7 +394,7 @@ class AtFile:
 
         # Not from a string. Carefully read the file.
         # Returns full path, including file name.
-        fn = g.fullPath(c, at.root)
+        fn = self.outline.fullPath(at.root)
 
         # Remember the full path to this node.
         at.setPathUa(at.root, fn)
@@ -397,7 +420,7 @@ class AtFile:
     def openAtShadowFileForReading(self, fn: str) -> str | None:  # pragma: no cover
         """Open an @shadow for reading and return shadow_fn."""
         at = self
-        x = at.c.shadowController
+        x = at.outline.shadowController
         # readOneAtShadowNode should already have checked these.
         shadow_fn = x.shadowPathName(fn)
         shadow_exists = g.os_path_exists(shadow_fn) and g.os_path_isfile(shadow_fn)
@@ -413,14 +436,14 @@ class AtFile:
     def read(self, root: Position, fromString: str = '') -> bool:
         """Read an @thin or @file tree."""
         at, c = self, self.c
-        fileName: str | None = c.fullPath(root)
+        fileName: str | None = self.outline.fullPath(root)
         if not fileName:  # pragma: no cover
             at.error("Missing file name. Restoring @file tree from .leo file.")
             return False
 
         # #760531: always mark the root as read, even if there was an error.
         # #889175: Remember the full fileName.
-        at.rememberReadPath(c.fullPath(root), root)
+        at.rememberReadPath(self.outline.fullPath(root), root)
         at.initReadIvars(root, fileName)
         if at.errors:
             return False
@@ -432,15 +455,15 @@ class AtFile:
 
         # Set the time stamp.
         if fileName:
-            c.setFileTimeStamp(fileName)
+            self.outline.setFileTimeStamp(fileName)
         elif not fileName and not fromString and not file_s:
             return False
 
         # Read the file!
         root.clearVisitedInTree()
-        gnx2vnode = c.fileCommands.gnxDict
+        gnx2vnode = self.outline.fileCommands.gnxDict
         contents = fromString or file_s
-        FastAtRead(c, gnx2vnode).read_into_root(contents, fileName or '', root)
+        FastAtRead(self.outline, gnx2vnode).read_into_root(contents, fileName or '', root)
         root.clearDirty()
         g.doHook('after-reading-external-file', c=c, p=root)
         return True
@@ -457,7 +480,7 @@ class AtFile:
         # Find the unvisited nodes.
         if aList := [z for z in root.subtree() if not z.isVisited()]:
             at.c.deletePositionsInList(aList)
-            c.redraw()
+            self.outline.redraw()
 
     # @+node:ekr.20041005105605.26: *5* at.readAll & helpers
     def readAll(self, root: Position) -> None:
@@ -466,7 +489,7 @@ class AtFile:
         at.changed_roots = []
         old_changed = c.changed
         t1 = time.time()
-        c.init_error_dialogs()
+        self.outline.init_error_dialogs()
         files = at.findFilesToRead(root, all=True)
         efc = g.app.externalFilesController
         # Coalesce the per-node events of a whole-tree read into one.
@@ -478,7 +501,8 @@ class AtFile:
                 # external files instead of leaving the _time_d empty, which would have defaulted
                 # to set_time's default.
                 if efc:
-                    efc.set_time(c.fullPath(p))  # #4426 Same as leaving efc's _time_d empty.
+                    # #4426 Same as leaving efc's _time_d empty.
+                    efc.set_time(self.outline.fullPath(p))
         for p in files:
             p.v.clearDirty()
         if not g.unitTesting and files:  # pragma: no cover
@@ -495,7 +519,7 @@ class AtFile:
         at.changed_roots = []
 
         # Last.
-        c.raise_error_dialogs()
+        self.outline.raise_error_dialogs()
 
     # @+node:ekr.20250711132317.1: *6* at.clone_all_changed_vnodes
     def clone_all_changed_vnodes(self) -> Position | None:
@@ -511,7 +535,7 @@ class AtFile:
             return None
         if not at.changed_roots:
             return None
-        if not c.config.getBool('report-changed-at-clean-nodes', default=False):
+        if not self.outline.config.getBool('report-changed-at-clean-nodes', default=False):
             return None
 
         # Undoably create the top-level node.
@@ -522,7 +546,7 @@ class AtFile:
         # Clone nodes as children of the found node.
         for root in at.changed_roots:
             parent = update_p.insertAsLastChild()
-            parent.h = f"Updated from: {g.shortFileName(c.fullPath(root))}"
+            parent.h = f"Updated from: {g.shortFileName(self.outline.fullPath(root))}"
             parent_body: list[str] = []
             # Clone all dirty nodes.
             assert root.v
@@ -562,7 +586,7 @@ class AtFile:
         files: list[Position] = []
         after = None if all else p.nodeAfterTree()
         while p and p != after:
-            data = (p.gnx, c.fullPath(p))
+            data = (p.gnx, self.outline.fullPath(p))
             # skip clones referring to exactly the same paths.
             if data in scanned_nodes:
                 p.moveToNodeAfterTree()
@@ -572,7 +596,7 @@ class AtFile:
                 p.moveToThreadNext()
             elif p.isAtIgnoreNode():
                 if p.isAnyAtFileNode():
-                    c.ignored_at_file_nodes.append(p.h)
+                    self.outline.ignored_at_file_nodes.append(p.h)
                 p.moveToNodeAfterTree()
             elif (
                 p.isAtThinFileNode()
@@ -608,7 +632,8 @@ class AtFile:
             if p.v.gnx != old_gnx:
                 g.es_print(f"reading @auto node changed the gnx for `{p.h}`")
                 g.es_print(f"from `{old_gnx}` to: `{p.v.gnx}`")
-                c.selectPosition(p)
+                if c:  # No window to move when leolib is reading.
+                    self.outline.selectPosition(p)
         elif p.isAtCleanNode():
             at.readOneAtCleanNode(p)
         elif p.isAtEditNode():
@@ -618,7 +643,7 @@ class AtFile:
         elif p.isAtJupytextNode():
             at.readOneAtJupytextNode(p)
         elif p.isAtNoSentFileNode():
-            at.rememberReadPath(c.fullPath(p), p)
+            at.rememberReadPath(self.outline.fullPath(p), p)
         elif p.isAtShadowFileNode():
             fileName = p.anyAtFileNodeName()
             at.readOneAtShadowNode(fileName, p)
@@ -630,7 +655,7 @@ class AtFile:
         at.changed_roots = []
         old_changed = c.changed
         t1 = time.time()
-        c.init_error_dialogs()
+        self.outline.init_error_dialogs()
         files = at.findFilesToRead(root, all=False)
         for p in files:
             at.readFileAtPosition(p)
@@ -653,7 +678,7 @@ class AtFile:
         at.changed_roots = []
 
         # Last.
-        c.raise_error_dialogs()
+        self.outline.raise_error_dialogs()
 
     # @+node:ekr.20080801071227.7: *5* at.readAtShadowNodes
     def readAtShadowNodes(self, p: Position) -> None:  # pragma: no cover
@@ -673,7 +698,7 @@ class AtFile:
     def readOneAtAsisNode(self, p: Position) -> None:  # pragma: no cover
         """Read one @asis node. Used only by refresh-from-disk"""
         at, c = self, self.c
-        fn = c.fullPath(p)
+        fn = self.outline.fullPath(p)
         _, ext = g.os_path_splitext(fn)
         # Remember the full fileName.
         at.rememberReadPath(fn, p)
@@ -693,8 +718,8 @@ class AtFile:
     # @+node:ekr.20070909100252: *5* at.readOneAtAutoNode
     def readOneAtAutoNode(self, p: Position) -> Position:  # pragma: no cover
         """Read an @auto file into p. Return the *new* position."""
-        at, c, ic = self, self.c, self.c.importCommands
-        fileName = c.fullPath(p)
+        at, c, ic = self, self.c, self.outline.importCommands
+        fileName = self.outline.fullPath(p)
         if not g.os_path_exists(fileName):
             g.error(f"not found: {p.h!r}", nodeLink=p.get_UNL())
             return p
@@ -707,7 +732,7 @@ class AtFile:
             p.v.b = ''  # Required for @auto API checks.
             p.v._deleteAllChildren()
             p = ic.createOutline(parent=p.copy(), treeType='@auto')  # type:ignore
-            # Do *not* call c.selectPosition(p) here.
+            # Do *not* call self.outline.selectPosition(p) here.
             # That would improperly expand nodes.
         except Exception:
             p = old_p
@@ -716,8 +741,8 @@ class AtFile:
             g.es_exception()
         if ic.errors:
             g.error(f"errors inhibited read @auto {fileName}")
-        elif c.persistenceController:
-            c.persistenceController.update_after_read_foreign_file(p)
+        elif self.outline.persistenceController:
+            self.outline.persistenceController.update_after_read_foreign_file(p)
         # Finish.
         if ic.errors or not g.os_path_exists(fileName):
             p.clearDirty()
@@ -729,13 +754,13 @@ class AtFile:
     # @+node:ekr.20150204165040.5: *5* at.readOneAtCleanNode & helpers
     def readOneAtCleanNode(self, root: Position, *, new_contents: str | None = None) -> None:
         """Update the @clean/@nosent node at root."""
-        at, c, x = self, self.c, self.c.shadowController
+        at, c, x = self, self.c, self.outline.shadowController
 
         assert root.v
         if new_contents:
             fileName = root.h  # Required.
         else:
-            fileName = c.fullPath(root)
+            fileName = self.outline.fullPath(root)
             if not g.os_path_exists(fileName):
                 g.es_print(f"not found: {fileName}", color='red', nodeLink=root.get_UNL())
                 return
@@ -744,7 +769,8 @@ class AtFile:
 
         # #4385: Do nothing if the file has not changed.
         # #4875: The mod time is a plain, in-memory, session-scoped cache: never serialized.
-        old_mod_time = c.mod_time_cache.get(root.v.gnx)  # #4385 The file's *last-seen* mod time.
+        # #4385 The file's *last-seen* mod time.
+        old_mod_time = self.outline.mod_time_cache.get(root.v.gnx)
         new_mod_time = g.os_path_getmtime(fileName)  # The file's *present* mod time.
 
         # Make sure it's newer: Don't update if the outline and file are in synch.
@@ -757,11 +783,11 @@ class AtFile:
 
         # #4385: *Clear* the mod time until we write the file.
         assert root.v
-        c.mod_time_cache.pop(root.v.gnx, None)
+        self.outline.mod_time_cache.pop(root.v.gnx, None)
 
         # Until the @clean's content is modified and written: set to file's *present* mod time.
         # This and writeOneAtCleanNode are the *only* two places that set the cached mod time.
-        c.mod_time_cache[root.v.gnx] = new_mod_time  # #4427
+        self.outline.mod_time_cache[root.v.gnx] = new_mod_time  # #4427
 
         # #4385: Remember all old bodies.
         for p in root.self_and_subtree():
@@ -787,7 +813,7 @@ class AtFile:
         root.clearVisitedInTree()
         gnx2vnode = at.fileCommands.gnxDict
         contents = ''.join(new_private_lines)
-        FastAtRead(c, gnx2vnode).read_into_root(contents, fileName, root)
+        FastAtRead(self.outline, gnx2vnode).read_into_root(contents, fileName, root)
         g.doHook('after-reading-external-file', c=c, p=root)
 
         # Calculate all changed vnodes.
@@ -836,8 +862,8 @@ class AtFile:
     def readOneAtEditNode(self, p: Position) -> None:  # pragma: no cover
         at = self
         c = at.c
-        ic = c.importCommands
-        fn = c.fullPath(p)
+        ic = self.outline.importCommands
+        fn = self.outline.fullPath(p)
         _, ext = g.os_path_splitext(fn)
         # Fix bug 889175: Remember the full fileName.
         at.rememberReadPath(fn, p)
@@ -873,7 +899,7 @@ class AtFile:
 
         This code is adapted from at.readOneAtCleanNode.
         """
-        at, c, x = self, self.c, self.c.shadowController
+        at, c, x = self, self.c, self.outline.shadowController
         contents, fileName = g.app.jupytextManager.read(c, root)
         if not contents:
             return
@@ -915,17 +941,17 @@ class AtFile:
         root.clearVisitedInTree()
         gnx2vnode = at.fileCommands.gnxDict
         new_contents = '@language python\n' + ''.join(new_private_lines)
-        FastAtRead(c, gnx2vnode).read_into_root(new_contents, fileName, root)
+        FastAtRead(self.outline, gnx2vnode).read_into_root(new_contents, fileName, root)
         g.doHook('after-reading-external-file', c=c, p=root)
 
     # @+node:ekr.20080711093251.7: *5* at.readOneAtShadowNode & helper
     def readOneAtShadowNode(self, fn: str, p: Position) -> None:  # pragma: no cover
         at, c = self, self.c
-        x = c.shadowController
+        x = self.outline.shadowController
         if fn != p.atShadowFileNodeName():
             at.error(f"can not happen: fn: {fn} != atShadowNodeName: {p.atShadowFileNodeName()}")
             return
-        fn = c.fullPath(p)
+        fn = self.outline.fullPath(p)
         # #889175: Remember the full fileName.
         at.rememberReadPath(fn, p)
         shadow_fn = x.shadowPathName(fn)
@@ -942,8 +968,8 @@ class AtFile:
 
     # @+node:ekr.20080712080505.1: *6* at.importAtShadowNode
     def importAtShadowNode(self, p: Position) -> bool:  # pragma: no cover
-        c, ic = self.c, self.c.importCommands
-        fn = c.fullPath(p)
+        c, ic = self.c, self.outline.importCommands
+        fn = self.outline.fullPath(p)
         if not g.os_path_exists(fn):
             g.error(f"not found: {p.h!r}", nodeLink=p.get_UNL())
             return False
@@ -968,7 +994,7 @@ class AtFile:
         root: Position,
     ) -> bool:  # pragma: no cover
         """A convenience wrapper for FastAtRead.read_into_root()"""
-        return FastAtRead(c, gnx2vnode).read_into_root(contents, path, root)
+        return FastAtRead(self.outline, gnx2vnode).read_into_root(contents, path, root)
 
     # @+node:ekr.20041005105605.116: *4* at.Reading utils...
     # @+node:ekr.20041005105605.119: *5* at.createImportedNode
@@ -999,7 +1025,7 @@ class AtFile:
         """
         at, c = self, self.c
         # Set defaults.
-        encoding = c.config.default_derived_file_encoding
+        encoding = self.outline.config.default_derived_file_encoding
         readVersion = ''
         new_df, start, end, isThin = False, '', '', False
         # Example: \*@+leo-ver=5-thin-encoding=utf-8,.*/
@@ -1197,7 +1223,7 @@ class AtFile:
     def writeAtAutoNodes(self, event: LeoKeyEvent | None = None) -> None:  # pragma: no cover
         """Write all @auto nodes in the selected outline."""
         at, c, p = self, self.c, self.c.p
-        c.init_error_dialogs()
+        self.outline.init_error_dialogs()
         after, found = p.nodeAfterTree(), False
         while p and p != after:
             if p.isAtAutoNode() and not p.isAtIgnoreNode():
@@ -1214,14 +1240,14 @@ class AtFile:
             g.es("finished")
         else:
             g.es("no @auto nodes in the selected tree")
-        c.raise_error_dialogs(kind='write')
+        self.outline.raise_error_dialogs(kind='write')
 
     # @+node:ekr.20220120072251.1: *6* at.writeDirtyAtAutoNodes
     @cmd('write-dirty-at-auto-nodes')  # pragma: no cover
     def writeDirtyAtAutoNodes(self, event: LeoKeyEvent | None = None) -> None:
         """Write all dirty @auto nodes in the selected outline."""
         at, c, p = self, self.c, self.c.p
-        c.init_error_dialogs()
+        self.outline.init_error_dialogs()
         after, found = p.nodeAfterTree(), False
         while p and p != after:
             if p.isAtAutoNode() and not p.isAtIgnoreNode() and p.isDirty():
@@ -1238,14 +1264,14 @@ class AtFile:
             g.es("finished")
         else:
             g.es("no dirty @auto nodes in the selected tree")
-        c.raise_error_dialogs(kind='write')
+        self.outline.raise_error_dialogs(kind='write')
 
     # @+node:ekr.20080711093251.3: *6* at.writeAtShadowNodes
     @cmd('write-at-shadow-nodes')
     def writeAtShadowNodes(self, event: LeoKeyEvent | None = None) -> bool:  # pragma: no cover
         """Write all @shadow nodes in the selected outline."""
         at, c, p = self, self.c, self.c.p
-        c.init_error_dialogs()
+        self.outline.init_error_dialogs()
         after, found = p.nodeAfterTree(), False
         while p and p != after:
             if p.atShadowFileNodeName() and not p.isAtIgnoreNode():
@@ -1263,7 +1289,7 @@ class AtFile:
             g.es("finished")
         else:
             g.es("no @shadow nodes in the selected tree")
-        c.raise_error_dialogs(kind='write')
+        self.outline.raise_error_dialogs(kind='write')
         return found
 
     # @+node:ekr.20220120072917.1: *6* at.writeDirtyAtShadowNodes
@@ -1271,7 +1297,7 @@ class AtFile:
     def writeDirtyAtShadowNodes(self, event: LeoKeyEvent | None = None) -> bool:  # pragma: no cover
         """Write all @shadow nodes in the selected outline."""
         at, c, p = self, self.c, self.c.p
-        c.init_error_dialogs()
+        self.outline.init_error_dialogs()
         after, found = p.nodeAfterTree(), False
         while p and p != after:
             if p.atShadowFileNodeName() and not p.isAtIgnoreNode() and p.isDirty():
@@ -1289,7 +1315,7 @@ class AtFile:
             g.es("finished")
         else:
             g.es("no dirty @shadow nodes in the selected tree")
-        c.raise_error_dialogs(kind='write')
+        self.outline.raise_error_dialogs(kind='write')
         return found
 
     # @+node:ekr.20041005105605.157: *5* at.putFile
@@ -1351,8 +1377,8 @@ class AtFile:
             after = p.nodeAfterTree()
         else:
             # Write dirty nodes in the entire outline.
-            root = c.rootPosition()
-            p = c.rootPosition()
+            root = self.outline.rootPosition()
+            p = self.outline.rootPosition()
             after = None
         seen = set()
         files: list[Position] = []
@@ -1362,10 +1388,10 @@ class AtFile:
             elif p.isAtIgnoreNode() and not p.isAtAsisFileNode():
                 # Honor @ignore in *body* text, but *not* in @asis nodes.
                 if p.isAnyAtFileNode():
-                    c.ignored_at_file_nodes.append(p.h)
+                    self.outline.ignored_at_file_nodes.append(p.h)
                 p.moveToNodeAfterTree()
             elif p.isAnyAtFileNode():
-                data = p.v, c.fullPath(p)
+                data = p.v, self.outline.fullPath(p)
                 if data in seen:
                     if trace and force:
                         g.trace('Already seen', p.h)
@@ -1466,7 +1492,7 @@ class AtFile:
         if c.ignoreChangedPaths:
             return  # pragma: no cover
         oldPath = g.os_path_normcase(at.getPathUa(p))
-        newPath = g.os_path_normcase(c.fullPath(p))
+        newPath = g.os_path_normcase(self.outline.fullPath(p))
         try:  # #1367: samefile can throw an exception.
             changed = oldPath and not os.path.samefile(oldPath, newPath)
         except Exception:
@@ -1519,8 +1545,8 @@ class AtFile:
     def asisWrite(self, root: Position) -> None:  # pragma: no cover
         at, c = self, self.c
         try:
-            c.endEditing()
-            c.init_error_dialogs()
+            self.outline.endEditing()
+            self.outline.init_error_dialogs()
             fileName = at.initWriteIvars(root)
             # #1450.
             if not fileName or not at.precheck(fileName, root):
@@ -1571,7 +1597,7 @@ class AtFile:
     def writeMissing(self, p: Position) -> None:  # pragma: no cover
         at, c = self, self.c
         writtenFiles = False
-        c.init_error_dialogs()
+        self.outline.init_error_dialogs()
         # #1450.
         at.initWriteIvars(root=p.copy())
         p = p.copy()
@@ -1579,7 +1605,7 @@ class AtFile:
         while p and p != after:  # Don't use iterator.
             if p.isAtAsisFileNode() or (p.isAnyAtFileNode() and not p.isAtIgnoreNode()):
                 if fileName := p.anyAtFileNodeName():
-                    fileName = c.fullPath(p)  # #1914.
+                    fileName = self.outline.fullPath(p)  # #1914.
                     if at.precheck(fileName, p):
                         at.writeMissingNode(p)
                         writtenFiles = True
@@ -1595,7 +1621,7 @@ class AtFile:
                 g.es("finished")
             else:
                 g.es("no @file node in the selected tree")
-        c.raise_error_dialogs(kind='write')
+        self.outline.raise_error_dialogs(kind='write')
 
     # @+node:ekr.20041005105605.152: *7* at.writeMissingNode
     def writeMissingNode(self, p: Position) -> None:  # pragma: no cover
@@ -1626,7 +1652,7 @@ class AtFile:
         at, c = self, self.c
         root = p.copy()
         try:
-            c.endEditing()
+            self.outline.endEditing()
             if not p.atAutoNodeName():
                 return False
             fileName = at.initWriteIvars(root)
@@ -1642,8 +1668,8 @@ class AtFile:
                 # The hook must print an error message.
                 return False
 
-            if c.persistenceController:
-                c.persistenceController.update_before_write_foreign_file(root)
+            if self.outline.persistenceController:
+                self.outline.persistenceController.update_before_write_foreign_file(root)
             contents = at.writeAtAutoContents(fileName, root)
             if not contents:
                 g.es("not written:", fileName)
@@ -1714,7 +1740,7 @@ class AtFile:
         """
         at, c = self, self.c
         try:
-            c.endEditing()
+            self.outline.endEditing()
             fileName = at.initWriteIvars(root)
             if not fileName or not at.precheck(fileName, root):
                 return
@@ -1742,7 +1768,7 @@ class AtFile:
                 # #4385, #4875: This and readOneAtCleanNode are the *only* two places
                 # that set the cached (in-memory-only) mod time.
                 assert root.v
-                c.mod_time_cache[root.v.gnx] = g.os_path_getmtime(fileName)
+                self.outline.mod_time_cache[root.v.gnx] = g.os_path_getmtime(fileName)
 
         except Exception:
             at.writeException(fileName, root)
@@ -1753,8 +1779,8 @@ class AtFile:
         at, c = self, self.c
         root = p.copy()
         try:
-            c.endEditing()
-            c.init_error_dialogs()
+            self.outline.endEditing()
+            self.outline.init_error_dialogs()
             if not p.atEditNodeName():
                 return False
             if p.hasChildren():
@@ -1778,7 +1804,7 @@ class AtFile:
                 [s for s in g.splitLines(p.b) if at.directiveKind4(s, 0) == at.noDirective]
             )
             at.replaceFile(contents, at.encoding, fileName, root)
-            c.raise_error_dialogs(kind='write')
+            self.outline.raise_error_dialogs(kind='write')
             return True
         except Exception:
             at.writeException(fileName, root)
@@ -1789,7 +1815,7 @@ class AtFile:
         """Write @file or @thin file."""
         at, c = self, self.c
         try:
-            c.endEditing()
+            self.outline.endEditing()
             fileName = at.initWriteIvars(root)
             at.sentinels = True
             if not fileName or not at.precheck(fileName, root):
@@ -1825,7 +1851,7 @@ class AtFile:
         """
         at, c, p = self, self.c, self.c.p
         try:
-            c.endEditing()
+            self.outline.endEditing()
             fileName = at.initWriteIvars(root)
             at.sentinels = False
 
@@ -1841,7 +1867,7 @@ class AtFile:
 
             # Write a minimal Jupyter file if the @jupytext tree is empty.
             if not root.b.strip() and not root.hasChildren():
-                prefix_list = c.config.getData(
+                prefix_list = self.outline.config.getData(
                     'jupyter-prefix', strip_comments=False, strip_data=False
                 )
                 if prefix_list:
@@ -1857,7 +1883,7 @@ class AtFile:
                 new_contents = ''.join(at.outputList)
                 g.app.jupytextManager.write(c, root, new_contents)
                 # Similar to at.replaceFile.
-                c.setFileTimeStamp(fileName)
+                self.outline.setFileTimeStamp(fileName)
                 at.rememberReadPath(fileName, root)
                 g.es_print(f"wrote: {fileName}")
         except Exception:
@@ -1871,7 +1897,7 @@ class AtFile:
         """
         at, c, p = self, self.c, self.c.p
         try:
-            c.endEditing()
+            self.outline.endEditing()
             fileName = at.initWriteIvars(root)
             at.sentinels = False
             if not fileName or not at.precheck(fileName, root):
@@ -1906,14 +1932,14 @@ class AtFile:
         """
         at, c = self, self.c
         root = p.copy()
-        x = c.shadowController
+        x = self.outline.shadowController
         try:
-            c.endEditing()  # Capture the current headline.
+            self.outline.endEditing()  # Capture the current headline.
             fn = p.atShadowFileNodeName()
             assert fn, p.h
-            # A hack to support unknown extensions. May set c.target_language.
+            # A hack to support unknown extensions. May set self.outline.target_language.
             self.adjustTargetLanguage(fn)
-            full_path = c.fullPath(p)
+            full_path = self.outline.fullPath(p)
             at.initWriteIvars(root)
             # Force python sentinels to suppress an error message.
             # The actual sentinels will be set below.
@@ -1974,7 +2000,7 @@ class AtFile:
     # @+node:ekr.20080819075811.13: *7* at.adjustTargetLanguage
     def adjustTargetLanguage(self, fn: str) -> None:  # pragma: no cover
         """Use the language implied by fn's extension if
-        there is a conflict between it and c.target_language."""
+        there is a conflict between it and self.outline.target_language."""
         at = self
         c = at.c
         _, ext = g.os_path_splitext(fn)
@@ -1982,7 +2008,7 @@ class AtFile:
             if ext.startswith('.'):
                 ext = ext[1:]
             if language := g.app.extension_dict.get(ext):
-                c.target_language = language
+                self.outline.target_language = language
             else:
                 # An unknown language.
                 # Use the default language, **not** 'unknown_language'
@@ -1993,7 +2019,7 @@ class AtFile:
     def atAsisToString(self, root: Position) -> str:  # pragma: no cover
         """Write the @asis node to a string."""
         at, c = self, self.c
-        c.endEditing()
+        self.outline.endEditing()
         fileName = at.initWriteIvars(root)
         try:
             at.outputList = []
@@ -2009,7 +2035,7 @@ class AtFile:
         """Write the root @auto node to a string, and return it."""
         at, c = self, self.c
         try:
-            c.endEditing()
+            self.outline.endEditing()
             fileName = at.initWriteIvars(root)
             at.sentinels = False
             # #1450.
@@ -2025,7 +2051,7 @@ class AtFile:
     def atCleanToString(self, root: Position) -> str:  # pragma: no cover
         """Write one @clean node to a string."""
         at, c = self, self.c
-        c.endEditing()
+        self.outline.endEditing()
         fileName = at.initWriteIvars(root)
         try:
             at.sentinels = False
@@ -2041,7 +2067,7 @@ class AtFile:
         """Write one @edit node."""
         at, c = self, self.c
         try:
-            c.endEditing()
+            self.outline.endEditing()
             if root.hasChildren():
                 g.error('@edit nodes must not have children')
                 g.es('To save your work, convert @edit to @auto, @file or @clean')
@@ -2065,7 +2091,7 @@ class AtFile:
         """Write an external file to a string, and return its contents."""
         at, c = self, self.c
         try:
-            c.endEditing()
+            self.outline.endEditing()
             at.initWriteIvars(root)
             at.sentinels = sentinels
             at.outputList = []
@@ -2094,7 +2120,7 @@ class AtFile:
         """
         at, c = self, self.c
         try:
-            c.endEditing()
+            self.outline.endEditing()
             at.initWriteIvars(root)
             if forcePythonSentinels:
                 at.endSentinelComment = ''
@@ -2603,11 +2629,11 @@ class AtFile:
     # @+node:ekr.20041005105605.196: *4* Writing utils...
     # @+node:ekr.20181024134823.1: *5* at.addToOrphanList
     def addToOrphanList(self, root: Position) -> None:  # pragma: no cover
-        """Mark the root as erroneous for c.raise_error_dialogs()."""
+        """Mark the root as erroneous for self.outline.raise_error_dialogs()."""
         c = self.c
         # Fix #1050:
         root.setOrphan()
-        c.orphan_at_file_nodes.append(root.h)
+        self.outline.orphan_at_file_nodes.append(root.h)
 
     # @+node:ekr.20090514111518.5661: *5* at.checkPythonCode & helpers
     def checkPythonCode(
@@ -2715,9 +2741,9 @@ class AtFile:
 
         # #4159: This may not restore the outline as it was,
         # but it's much better than doing nothing.
-        c.selectPosition(old_p)
+        self.outline.selectPosition(old_p)
         c.contractAllOtherNodes()
-        c.redraw(old_p)
+        self.outline.redraw(old_p)
         return True
 
     # @+node:vv.20260807130000.1: *6* at.runRuff
@@ -3047,7 +3073,7 @@ class AtFile:
     # @+node:ekr.20041005105605.211: *5* at.putInitialComment
     def putInitialComment(self) -> None:  # pragma: no cover
         c = self.c
-        s2 = c.config.getString('output-initial-comment') or ''
+        s2 = self.outline.config.getString('output-initial-comment') or ''
         if s2.strip():
             lines = s2.split("\\n")
             for line in lines:
@@ -3072,8 +3098,8 @@ class AtFile:
         root.clearDirty()
 
         # Create the timestamp (only for messages).
-        if c.config.getBool('log-show-save-time', default=False):  # pragma: no cover
-            format = c.config.getString('log-timestamp-format') or "%H:%M:%S"
+        if self.outline.config.getBool('log-show-save-time', default=False):  # pragma: no cover
+            format = self.outline.config.getString('log-timestamp-format') or "%H:%M:%S"
             timestamp = time.strftime(format) + ' '
         else:
             timestamp = ''
@@ -3088,7 +3114,7 @@ class AtFile:
         sfn = g.shortFileName(fileName)
         if not g.os_path_exists(fileName):
             if g.writeFile(contents, encoding, fileName):
-                c.setFileTimeStamp(fileName)
+                self.outline.setFileTimeStamp(fileName)
                 if not g.unitTesting:
                     g.es(f"{timestamp}created: {fileName}")  # pragma: no cover
                 if root:
@@ -3112,7 +3138,8 @@ class AtFile:
 
         if unchanged:
             at.unchangedFiles += 1
-            if not g.unitTesting and c.config.getBool('report-unchanged-files', default=True):
+            report = self.outline.config.getBool('report-unchanged-files', default=True)
+            if not g.unitTesting and report:
                 g.es(f"{timestamp}unchanged: {sfn}")  # pragma: no cover
 
             # Check *unchanged* files.
@@ -3131,8 +3158,9 @@ class AtFile:
 
         # Write a changed file.
         if ok := g.writeFile(contents, encoding, fileName):
-            c.setFileTimeStamp(fileName)
-            if not g.unitTesting and c.config.getBool('report-changed-files', default=True):
+            self.outline.setFileTimeStamp(fileName)
+            report = self.outline.config.getBool('report-changed-files', default=True)
+            if not g.unitTesting and report:
                 g.es(f"{timestamp}wrote: {sfn}")  # pragma: no cover
         else:  # pragma: no cover
             g.error('error writing', sfn)
@@ -3335,7 +3363,7 @@ class AtFile:
                     g.es('can not convert @file to @auto-rst!', color='red')
                     g.es('reverting to:', h)
                     root.h = h
-                    c.redraw()
+                    self.outline.redraw()
                     return False
         if not message:
             message = (
@@ -3458,8 +3486,14 @@ class FastAtRead:
 
     # @+others
     # @+node:ekr.20211030193146.1: *3* fast_at.__init__
-    def __init__(self, c: Cmdr, gnx2vnode: dict[str, VNode]) -> None:
-        self.c = c
+    def __init__(self, context: Outline | Cmdr, gnx2vnode: dict[str, VNode]) -> None:
+        """
+        Takes an Outline or a commander, normalized as VNode.__init__ does it.
+
+        Parsing an external file into vnodes is a document operation; self.c is
+        None when leolib is driving.
+        """
+        self.outline: Outline = getattr(context, 'outline', context)
         assert gnx2vnode is not None
         # The global fc.gnxDict. Keys are gnx's, values are vnodes.
         self.gnx2vnode: dict[str, VNode] = gnx2vnode
@@ -3594,7 +3628,7 @@ class FastAtRead:
 
         # Init the parent vnode.
         gnx = self.root.gnx
-        context = self.c
+        context = self.outline  # It is a VNode context: the document.
         parent_v = self.root.v
         root_v = parent_v  # Does not change.
         level_stack.append((root_v, None))

@@ -42,6 +42,7 @@ import os
 from typing import Any, TYPE_CHECKING
 
 from leo.core import leoGlobals as g
+from leo.core import leoLanguageData
 from leo.core import leoNodes
 from leo.core.leoOutline import Outline
 
@@ -49,7 +50,10 @@ if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoNodes import Position, VNode
 # @-<< leolib imports >>
 
-__all__ = ['Outline', 'new_outline', 'open_outline', 'save', 'to_xml']
+__all__ = [
+    'Outline', 'new_outline', 'open_outline', 'read_external_files',
+    'save', 'to_xml',
+]
 
 
 # @+others
@@ -91,6 +95,38 @@ class _MinimalApp:
         # v.contentModified asks whether any plugin is listening before it
         # records anything. None means "nobody is", which is the truth here.
         self.pluginsController = None
+        self.externalFilesController = None  # outline.setFileTimeStamp asks.
+        # g.doHook's guards. No plugins are loaded, so no hook can fire;
+        # the readers call g.doHook unconditionally and it must say no.
+        self.killed = False
+        self.hookError = False
+        self.hookFunction = None
+        self.idle_time_hooks_enabled = False
+        # No plugins are loaded, so no hook can fire. This is what makes
+        # g.doHook return None immediately rather than looking for a handler.
+        self.enablePlugins = False
+        # g.es_print_error consults it for a colour. There are no global
+        # settings without a settings file, which is the truth here.
+        self.config = None
+        # What g.es and friends consult. leolib has no log window, so messages
+        # go to stdout via g.pr, which is what logInited=False already means.
+        self.batchMode = False
+        self.logInited = False
+        self.logWaiting: list[Any] = []
+        self.printWaiting: list[Any] = []
+        self.signon = ''
+        self.signon1 = ''
+        self.signon2 = ''
+        self.syntax_error_files: list[str] = []
+        # outline.getPath falls back to this for an outline with no file name.
+        self.homeDir = os.path.expanduser('~')
+        # Comment delimiters and file extensions. The readers and writers of
+        # external files need these; leoLanguageData is where LeoApp gets them
+        # too, so there is one copy of the data.
+        self.extension_dict = dict(leoLanguageData.extension_dict)
+        self.language_delims_dict = dict(leoLanguageData.language_delims_dict)
+        self.language_extension_dict = dict(leoLanguageData.language_extension_dict)
+        self.extra_extension_dict = {'pod': 'perl', 'unknown_language': 'none', 'w': 'c'}
         # VNode asks for these on every dirty bit. leoGlobals owns the
         # constants; LeoApp copies the same ones.
         self.atAutoNames = set(g.atAutoNames)
@@ -135,9 +171,16 @@ def new_outline(fileName: str = '') -> Outline:
 
 
 # @+node:sa.20260906100000.7: ** leolib.open_outline
-def open_outline(path: str) -> Outline:
+def open_outline(path: str, read_external: bool = True) -> Outline:
     """
     Read a .leo file and return its Outline. No commander, no frame, no gui.
+
+    A .leo file stores only the outline's own nodes; the contents of @file,
+    @clean and friends live in the external files themselves. Reading them is
+    on by default because otherwise this returns a shell -- LeoPyRef.leo is 530
+    nodes without them and 11,373 with. Pass read_external=False to look at
+    just the .leo file, which is much faster and is what you want if you only
+    need the shape of the outline.
 
     The window size and pane ratios the file records are put on
     outline.window_geometry rather than applied to anything; a front end that
@@ -158,8 +201,43 @@ def open_outline(path: str) -> Outline:
     if v is None:
         raise ValueError(f"not a readable .leo file: {path}")
     outline.hiddenRootNode = v
+    if read_external:
+        read_external_files(outline)
     outline.changed = False
     return outline
+
+
+# @+node:sa.20260906140000.1: ** leolib.read_external_files
+def read_external_files(outline: Outline) -> int:
+    """
+    Read every @file/@clean/@edit tree in the outline. Return how many were read.
+
+    Errors on one file must not abandon the rest: a .leo file routinely refers
+    to external files that have moved or that this machine does not have, and a
+    library that raised on the first of them would be useless for exactly the
+    bulk work it exists for. Failures leave the node as the .leo file described
+    it, which is what Leo itself does.
+    """
+    from leo.core import leoAtFile
+    at = leoAtFile.AtFile(outline)
+    outline.ignored_at_file_nodes = []
+    outline.orphan_at_file_nodes = []
+    count = 0
+    # findFilesToRead does the selecting: it honours @ignore, skips clones of
+    # the same path, and yields each tree once. readFileAtPosition then
+    # dispatches on the node's kind: @file, @clean, @edit, @auto, @shadow
+    # and @jupytext are all read differently, and using at.read for all of
+    # them reports every non-sentinel file as invalid.
+    with outline.batch_events():
+        for p in at.findFilesToRead(outline.rootPosition(), all=True):
+            try:
+                at.readFileAtPosition(p)
+                count += 1
+            except Exception:  # pragma: no cover (depends on files on disk)
+                g.es_exception()
+    for p in at.findFilesToRead(outline.rootPosition(), all=True):
+        p.v.clearDirty()
+    return count
 
 
 # @+node:sa.20260906100000.8: ** leolib.to_xml

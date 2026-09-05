@@ -46,7 +46,9 @@ class ShadowController:
     __slots__ = (
         'a',
         'b',
-        'c',
+        # 'c' is a property, not a slot: this holds the document. Managing
+        # shadow files needs settings and paths, both document-level.
+        'outline',
         'delim1',
         'delim2',
         'dispatch_dict',
@@ -68,9 +70,15 @@ class ShadowController:
 
     # @+others
     # @+node:ekr.20080708094444.79: *3*  x.ctor & x.reloadSettings
-    def __init__(self, c: Cmdr, trace: bool = False, trace_writers: bool = False) -> None:
-        """Ctor for ShadowController class."""
-        self.c = c
+    def __init__(
+        self, context: Any, trace: bool = False, trace_writers: bool = False
+    ) -> None:
+        """
+        Ctor for ShadowController class.
+
+        Takes an Outline or a commander, normalized as VNode.__init__ does it.
+        """
+        self.outline = getattr(context, 'outline', context)
         # Opcode dispatch dict.
         self.dispatch_dict = {
             'delete': self.op_delete,
@@ -78,7 +86,7 @@ class ShadowController:
             'insert': self.op_insert,
             'replace': self.op_replace,
         }
-        self.encoding: str = c.config.default_derived_file_encoding
+        self.encoding: str = self.outline.config.default_derived_file_encoding
         self.errors = 0
         self.results: list[str] = []
         self.shadow_subdir: str = ''
@@ -87,19 +95,23 @@ class ShadowController:
         # Support for goto-line.
         self.reloadSettings()
 
+    @property
+    def c(self) -> Any:
+        """The view to act on, or None when this outline has no view at all."""
+        return self.outline.c
+
     def reloadSettings(self) -> None:
         """ShadowController.reloadSettings."""
-        c = self.c
-        self.shadow_subdir = c.config.getString('shadow-subdir') or '.leo_shadow'
-        self.shadow_prefix = c.config.getString('shadow-prefix') or ''
-        self.shadow_in_home_dir = c.config.getBool('shadow-in-home-dir', default=False)
+        config = self.outline.config
+        self.shadow_subdir = config.getString('shadow-subdir') or '.leo_shadow'
+        self.shadow_prefix = config.getString('shadow-prefix') or ''
+        self.shadow_in_home_dir = config.getBool('shadow-in-home-dir', default=False)
         self.shadow_subdir = g.os_path_normpath(self.shadow_subdir)
 
     # @+node:ekr.20080711063656.1: *3* x.File utils
     # @+node:ekr.20080711063656.7: *4* x.baseDirName
     def baseDirName(self) -> str:
-        c = self.c
-        if filename := c.fileName():
+        if filename := self.outline.fileName():
             return g.os_path_dirname(g.finalize(filename))
         print('')
         self.error('Can not compute shadow path: .leo file has not been saved')
@@ -142,14 +154,14 @@ class ShadowController:
 
         Return True if theFile was changed.
         """
-        x, c = self, self.c
+        x = self
         if exists := g.os_path_exists(fileName):
             # Read the file.  Return if it is the same.
             s2, e = g.readFileIntoString(fileName)
             if s2 is None:
                 return False
             if s == s2:
-                report = c.config.getBool('report-unchanged-files', default=True)
+                report = self.outline.config.getBool('report-unchanged-files', default=True)
                 if report and not g.unitTesting:
                     g.es('unchanged:', fileName)
                 return False
@@ -164,7 +176,7 @@ class ShadowController:
             with open(fileName, 'wb') as f:
                 # Fix bug 1243847: unicode error when saving @shadow nodes.
                 f.write(g.toEncodedString(s, encoding=encoding))
-            c.setFileTimeStamp(fileName)  # Fix #1053.  This is an *ancient* bug.
+            self.outline.setFileTimeStamp(fileName)  # Fix #1053.  This is an *ancient* bug.
             if not g.unitTesting:
                 kind = 'wrote' if exists else 'created'
                 g.es(f"{kind:>6}: {fileName}")
@@ -181,7 +193,7 @@ class ShadowController:
         return g.os_path_dirname(x.shadowPathName(filename))
 
     def shadowPathName(self, filename: str) -> str:
-        """Return the full path name of filename, resolved using c.fileName()"""
+        """Return the full path name of filename, resolved using self.outline.fileName()"""
         x = self
         c = x.c
         baseDir = x.baseDirName()
@@ -189,7 +201,8 @@ class ShadowController:
         # 2011/01/26: bogomil: redirect shadow dir
         if self.shadow_in_home_dir:
             # Each .leo file has a separate shadow_cache in base dir
-            fname = "_".join([os.path.splitext(os.path.basename(c.mFileName))[0], "shadow_cache"])
+            base = os.path.splitext(os.path.basename(self.outline.mFileName))[0]
+            fname = "_".join([base, "shadow_cache"])
             # On Windows incorporate the drive letter to the private file path
             if os.name == "nt":
                 fileDir = fileDir.replace(':', '%')
@@ -305,7 +318,7 @@ class ShadowController:
         """Init all ivars used by propagate_changed_lines & its helpers."""
         x = self
         x.delim1, x.delim2 = marker.getDelims()
-        x.gnxDict = x.c.fileCommands.gnxDict
+        x.gnxDict = self.outline.fileCommands.gnxDict
         x.marker = marker
         x.old_sent_lines = old_private_lines
         x.results = []
@@ -402,7 +415,7 @@ class ShadowController:
         Propagate the changes from the public file (without_sentinels)
         to the private file (with_sentinels)
         """
-        x, at = self, self.c.atFileCommands
+        x, at = self, self.outline.atFileCommands
         at.errors = 0
         self.encoding = at.encoding
         s = at.readFileToUnicode(old_private_file)  # Sets at.encoding and inits at.readLines.
@@ -463,7 +476,7 @@ class ShadowController:
     # @+node:ekr.20090529125512.6122: *4* x.markerFromFileLines & helper
     def markerFromFileLines(self, lines: list[str], fn: str) -> Marker:
         """Return the sentinel delimiter comment to be used for filename."""
-        at, x = self.c.atFileCommands, self
+        at, x = self.outline.atFileCommands, self
         s = x.findLeoLine(lines)
         ok, _, start, end, _ = at.parseLeoSentinel(s)
         if end:

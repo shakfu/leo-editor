@@ -22,6 +22,8 @@ See LEO_REFACTOR.md for the staged plan this belongs to.
 # @+<< leoOutline imports and annotations >>
 # @+node:sa.20260905130000.2: ** << leoOutline imports and annotations >>
 from __future__ import annotations
+import os
+import re
 from typing import Any, TYPE_CHECKING
 from leo.core import signal_manager
 from leo.core import leoGlobals as g
@@ -33,6 +35,65 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 # @+others
+# @+node:sa.20260906130000.1: ** class DefaultConfig
+class DefaultConfig:
+    """
+    The settings an outline has when nobody has configured anything.
+
+    Leo's settings live in .leo files that a *commander* reads, so an Outline
+    with no view has none. Every caller in leoAtFile and leoFileCommands
+    already passes an explicit `default=`, so answering with the caller's
+    default is not a stub: it is exactly what Leo does when a setting is unset.
+
+    Deliberately narrow. A setting this does not know about raises rather than
+    guessing, because a wrong default here would show up as a subtly wrong
+    external file rather than as an error. That is not hypothetical: this class
+    began with new_leo_file_encoding = 'UTF-8' where Leo uses 'utf-8', which
+    changed the XML declaration of every file leolib wrote.
+
+    Note that "no settings" is not the same as "Leo's shipped settings".
+    leoSettings.leo ships `@int page-width = 80` while the code default is 132,
+    so an outline opened by leolib takes 132. Anything whose value can reach an
+    external file should be checked against leoSettings.leo before it is
+    trusted for writing.
+    """
+
+    # @+others
+    # @+node:sa.20260906130000.2: *3* default_config: getters
+    def getBool(self, setting: str, default: Any = None) -> Any:
+        return default
+
+    def getString(self, setting: str, default: Any = None) -> Any:
+        return default
+
+    def getInt(self, setting: str, default: Any = None) -> Any:
+        return default
+
+    def getFloat(self, setting: str, default: Any = None) -> Any:
+        return default
+
+    def getColor(self, setting: str, default: Any = None) -> Any:
+        return default
+
+    def getData(self, setting: str, default: Any = None) -> Any:
+        return default
+
+    def getDirectory(self, setting: str, default: Any = None) -> Any:
+        return default
+
+    # @+node:sa.20260906130000.3: *3* default_config: file-format settings
+    # Named attributes the readers and writers use directly, copied verbatim
+    # from LocalConfigManager so that a file leolib writes is byte-identical to
+    # one Leo writes. 'UTF-8' here instead of 'utf-8' was enough to change the
+    # XML declaration of every .leo file leolib saved.
+    new_leo_file_encoding = 'utf-8'
+    default_derived_file_encoding = 'utf-8'
+    default_at_auto_file_encoding = 'utf-8'
+    output_newline = 'nl'
+
+    # @-others
+
+
 # @+node:sa.20260905170000.1: ** class ViewState
 class ViewState:
     """
@@ -130,6 +191,13 @@ class Outline:
         # whether the outline moved under it can compare this against its own
         # last-seen value.
         self.generation = 0
+        self.scanAtPathDirectivesCount = 0  # An important statistic.
+        self._default_config: Any = None  # See outline.config.
+        # What the last read of this document's external files skipped or
+        # could not place. Facts about the files, not about a window; a front
+        # end turns them into dialogs, and leolib just reads them.
+        self.ignored_at_file_nodes: list[str] = []
+        self.orphan_at_file_nodes: list[str] = []
 
         # Model state owned by the document.
         self.hiddenRootNode: VNode = None  # Set by Commands.initObjects.
@@ -147,6 +215,10 @@ class Outline:
         # Reading and writing the .leo file. Owned here, not on a commander:
         # the gnx index is one per document, never one per window.
         self._fileCommands: Any = None
+        self._atFileCommands: Any = None
+        self._shadowController: Any = None
+        self._persistenceController: Any = None
+        self._importCommands: Any = None
 
         # Stands in for c.db while this outline has no view. leolib opens
         # outlines with no window and therefore no commander cache.
@@ -442,6 +514,281 @@ class Outline:
             return self._viewless_db
         return primary.db
 
+    # @+node:sa.20260906120000.1: *3* outline: paths
+    # Where a node's external file lives is a fact about the *document*: it
+    # falls out of the @path directives in the tree and the directory the .leo
+    # file sits in, and every view of an outline must agree about it. It lived
+    # on Commands, which is why a script holding only a VNode -- whose .context
+    # is an Outline -- could not ask for it. See LEO_REFACTOR.md.
+
+    # Use a regex to avoid allocating temp strings.
+    # https://en.wikipedia.org/wiki/Filename
+    at_path_pattern = re.compile(r'^@path\s+(.+)$', re.MULTILINE)
+
+    def getPathFromNode(self, p: Position) -> str | None:
+        """Scan p.h then p.b for @path directives."""
+        self.scanAtPathDirectivesCount += 1  # An important statistic.
+
+        def get_path(m: re.Match) -> str | None:
+            return g.stripPathCruft(m.group(1)) if m else None
+
+        # The headline has higher precedence because it is more visible.
+        paths: list[str] = []
+        for kind, s in (('head', p.h), ('body', p.b)):
+            for m in self.at_path_pattern.finditer(s):
+                if kind == 'body' and p.isAtFileNode():
+                    message = '@path is not allowed in the body text of @file nodes\n'
+                    g.print_unique_message(message)
+                elif path := get_path(m):
+                    paths.append(path)
+            if paths:
+                break
+        if len(paths) > 1:
+            message = (
+                f"Multiple @path directives in {p.h!r}\n"
+                f"Using the first path: @path {paths[0]}"
+            )  # fmt: skip
+            g.print_unique_message(message)
+        return paths[0] if paths else None
+
+    def getPath(self, p: Position) -> str:
+        """
+        Scan for @path directives in p and all its direct ancestors.
+
+        Return an absolute path or a reasonable default.
+        """
+        paths = []
+        for p2 in p.self_and_parents():
+            if path := self.getPathFromNode(p2):
+                paths.append(path)
+        # Add absbase and reverse the list.
+        absbase = g.os_path_dirname(self.fileName()) if self.fileName() else g.app.homeDir
+        paths.append(absbase)
+        paths.reverse()
+        # Compute the full, effective, absolute path.
+        return g.finalize_join(*paths)
+
+    def fullPath(self, p: Position) -> str:
+        """
+        Return the absolute path in effect at p.
+
+        Return the path to an external file if p is an @<file> node.
+        Otherwise return the path to the enclosing directory.
+        """
+        return g.finalize_join(self.getPath(p), p.anyAtFileNodeName())
+
+    def setFileTimeStamp(self, fn: str) -> None:
+        """Update the recorded modification time for the external file fn."""
+        # Never used a commander: the external-files controller is a global.
+        efc = getattr(g.app, 'externalFilesController', None)
+        if efc:
+            efc.set_time(fn)
+
+    def relativeDirectory(self, path: str) -> str:
+        """Return the path relative to this outline, or the full, absolute path."""
+        return g.relativeDirectory(os.path.dirname(self.fileName()), path)
+
+    # @+node:sa.20260906160001.1: *3* outline: directive scanners
+    # Scanning the tree for the @language, @comment, @encoding, @tabwidth,
+    # pagewidth, wrap and lineending directives. These read directives out
+    # of headlines
+    # and body text and fall back to the outline's settings, so the answer is a
+    # property of the *document*: two windows on one outline must not disagree
+    # about what language a node is written in. `c = self` below is an Outline,
+    # and every c.<name> it uses is one this class provides.
+
+    # @+node:ekr.20250405040620.1: *3* outline.getDelims
+    # Use a regex to avoid allocating temp strings.
+    at_comment_pattern = re.compile(r'^@comment\s+(.*)$', re.MULTILINE)
+
+    def getDelims(self, p: Position) -> tuple[str, str, str]:
+        c = self
+        # The headline has higher precedence because it is more visible.
+        for p2 in p.self_and_parents():
+            for s in (p2.h, p2.b):
+                for m in c.at_comment_pattern.finditer(s):
+                    comment = m.group(1)
+                    return g.set_delims_from_string(comment)
+
+        # Return the default comment delims.
+        default_language = c.getLanguage(p) or c.target_language or 'python'
+        return g.set_delims_from_language(default_language)
+
+    # @+node:ekr.20250404072805.1: *3* outline.getEncoding
+    # Use a regex to avoid allocating temp strings.
+    at_encoding_pattern = re.compile(r'^@encoding\s+([\w_-]+)', re.MULTILINE)
+
+    def getEncoding(self, p: Position) -> str:
+        """
+        Scan p and all ancestors for the first @encoding direcive.
+
+        Return c.config.default_derived_file_encoding or 'utf-8' by default.
+        """
+        c = self
+        # The headline has higher precedence because it is more visible.
+        for p2 in p.self_and_parents():
+            for s in (p2.h, p2.b):
+                for m in c.at_encoding_pattern.finditer(s):
+                    encoding = m.group(1)
+                    if g.isValidEncoding(encoding):
+                        return encoding
+                    g.error("invalid @encoding:", encoding)
+        return c.config.default_derived_file_encoding or 'utf-8'
+
+    # @+node:ekr.20250405141653.1: *3* outline.getLanguage
+    def getLanguage(self, p: Position) -> str:
+        """
+        Return the language in effect at node p, checking that the language is valid."""
+        v0 = p.v
+        assert v0
+        assert p.v
+        seen: set[VNode]
+
+        # The same generator as in v.setAllAncestorAtFileNodesDirty.
+        # Original idea by Виталије Милошевић (Vitalije Milosevic).
+        # Modified by EKR.
+
+        def v_and_parents(v: VNode) -> VNodeGenerator:
+            if v in seen:
+                return
+            seen.add(v)
+            yield v
+            for parent_v in v.parents:
+                if parent_v not in seen:
+                    yield from v_and_parents(parent_v)
+
+        # First, see if p contains any @language directive.
+        if language := g.findFirstValidAtLanguageDirective(p.b):
+            return language
+
+        # Passes 1 and 2: Search body text for unambiguous @language directives.
+
+        # Pass 1: Search body text in direct parents for unambiguous @language directives.
+        for p2 in p.self_and_parents(copy=False):
+            languages = g.findAllValidLanguageDirectives(p2.v.b)
+            if len(languages) == 1:  # An unambiguous language
+                return languages[0]
+
+        # Pass 2: Search body text in extended parents for unambiguous @language directives.
+        seen = set([v0.context.hiddenRootNode])
+        for v in v_and_parents(v0):
+            languages = g.findAllValidLanguageDirectives(v.b)
+            if len(languages) == 1:  # An unambiguous language
+                return languages[0]
+
+        # Passes 3 & 4: Use the file extension in @<file> nodes.
+
+        def get_language_from_headline(v: VNode) -> str:
+            """Return the extension for @<file> nodes."""
+            if v.isAnyAtFileNode():
+                name = v.anyAtFileNodeName()
+                _, ext = g.os_path_splitext(name)
+                ext = ext[1:]  # strip the leading period.
+                language = g.app.extension_dict.get(ext, '')
+                if g.isValidLanguage(language):
+                    return language
+            return ''
+
+        # Pass 3: Use file extension in headline of @<file> in direct parents.
+        for p2 in p.self_and_parents(copy=False):
+            if language := get_language_from_headline(p2.v):
+                return language
+
+        # Pass 4: Use file extension in headline of @<file> nodes in extended parents.
+        seen = set([v0.context.hiddenRootNode])
+        for v in v_and_parents(v0):
+            assert v
+            if language := get_language_from_headline(v):
+                return language
+
+        # Return the default language for the commander.
+        c = p.v.context
+        return c.target_language or 'python'
+
+    # @+node:ekr.20250405053842.1: *3* outline.getLineEnding
+    # Use a regex to avoid allocating temp strings.
+    at_lineending_pattern = re.compile(r'^@lineending\s+([\w]+)', re.MULTILINE)
+
+    def getLineEnding(self, p: Position) -> str:
+        """
+        Scan p and all ancestors for the first @lineending direcive.
+        Return None (*not* '\n') by default.
+        """
+        c = self
+        # The headline has higher precedence because it is more visible.
+        for p2 in p.self_and_parents():
+            for s in (p2.h, p2.b):
+                for m in c.at_lineending_pattern.finditer(s):
+                    ending = m.group(1)
+                    if ending in ("cr", "crlf", "lf", "nl", "platform"):
+                        return g.getOutputNewline(name=ending)
+        return ''
+
+    # @+node:ekr.20250404153234.1: *3* outline.getPageWidth
+    # Use a regex to avoid allocating temp strings.
+    at_pagewidth_pattern = re.compile(r'^@pagewidth\s+(-?[0-9]+)', re.MULTILINE)
+
+    def getPageWidth(self, p: Position) -> int:
+        """
+        Scan p.b and all ancestors for the first @pagewith direcive.
+
+        Return c.page_width by default.
+        """
+        c = self
+        # The headline has higher precedence because it is more visible.
+        for p2 in p.self_and_parents():
+            for s in (p2.h, p2.b):
+                for m in c.at_pagewidth_pattern.finditer(s):
+                    width = m.group(1)
+                    try:
+                        return int(width)
+                    except ValueError:
+                        g.error("ignoring m.group(0)")
+        return c.page_width
+
+    # @+node:ekr.20250404153250.1: *3* outline.getTabWidth
+    # Use a regex to avoid allocating temp strings.
+    at_tabwidth_pattern = re.compile(r'^@tabwidth\s+(-?[0-9]+)', re.MULTILINE)
+
+    def getTabWidth(self, p: Position) -> int:
+        """
+        Scan p.b and all ancestors for the first @encoding direcive.
+
+        Return c.tab_width by default.
+        """
+        c = self
+        # The headline has higher precedence because it is more visible.
+        for p2 in p.self_and_parents():
+            for s in (p2.h, p2.b):
+                for m in c.at_tabwidth_pattern.finditer(s):
+                    width = m.group(1)
+                    try:
+                        return int(width)
+                    except ValueError:
+                        g.error("ignoring m.group(0)")
+        return c.tab_width
+
+    # @+node:ekr.20250405143421.1: *3* outline.getWrap
+    # Use a regex to avoid allocating temp strings.
+    at_wrap_pattern = re.compile(r'^@wrap', re.MULTILINE)
+    at_nowrap_pattern = re.compile(r'^@nowrap', re.MULTILINE)
+
+    def getWrap(self, p: Position) -> int:
+        """
+        Scan p.b and all ancestors for @wrap and @nowrap directives.
+        Return @bool body-pane-wraps by default.
+        """
+        c = self
+        # The headline has higher precedence because it is more visible.
+        for p2 in p.self_and_parents():
+            for s in (p2.h, p2.b):
+                if c.at_wrap_pattern.search(s) is not None:
+                    return True
+                if c.at_nowrap_pattern.search(s) is not None:
+                    return False
+        return c.config.getBool("body-pane-wraps")
+
+    # @+node:sa.20260906120001.1: *3* outline.gnx_kind
     @property
     def gnx_kind(self) -> str:
         """
@@ -452,18 +799,66 @@ class Outline:
         settings by the allocator. Defaults to legacy when there are no
         settings to consult, which is the case for an outline leolib opened.
         """
-        config = self.config
-        if config is None:
-            return 'none'
-        return (config.getString('gnx-kind') or 'none').lower()
+        return (self.config.getString('gnx-kind') or 'none').lower()
+
+    @property
+    def atFileCommands(self) -> Any:
+        """This document's external-file reader/writer, created on demand."""
+        if self._atFileCommands is None:
+            from leo.core import leoAtFile
+            self._atFileCommands = leoAtFile.AtFile(self)
+        return self._atFileCommands
+
+    @atFileCommands.setter
+    def atFileCommands(self, at: Any) -> None:
+        self._atFileCommands = at
+
+    @property
+    def shadowController(self) -> Any:
+        """This document's @shadow machinery, created on demand."""
+        if self._shadowController is None:
+            from leo.core import leoShadow
+            self._shadowController = leoShadow.ShadowController(self)
+        return self._shadowController
+
+    @shadowController.setter
+    def shadowController(self, x: Any) -> None:
+        self._shadowController = x
+
+    @property
+    def persistenceController(self) -> Any:
+        """This document's @persistence machinery, created on demand."""
+        if self._persistenceController is None:
+            from leo.core import leoPersistence
+            self._persistenceController = leoPersistence.PersistenceDataController(self)
+        return self._persistenceController
+
+    @persistenceController.setter
+    def persistenceController(self, pc: Any) -> None:
+        self._persistenceController = pc
+
+    @property
+    def importCommands(self) -> Any:
+        """
+        This document's importer for @auto trees.
+
+        Unlike the readers above, leoImport still reaches for a window in
+        places, so this is a forward while there is a view and a best effort
+        without one. Reading an @auto node is the one part of
+        leolib.read_external_files that may still fail for that reason; the
+        failure is per node and leaves the node as the .leo file described it.
+        """
+        if self.c is not None:
+            return self.c.importCommands
+        if self._importCommands is None:
+            from leo.core import leoImport
+            self._importCommands = leoImport.LeoImportCommands(self)
+        return self._importCommands
 
     @property
     def leo_file_encoding(self) -> str:
         """The encoding for this document's .leo file."""
-        config = self.config
-        if config is not None:
-            return config.new_leo_file_encoding
-        return 'UTF-8'  # leolib's default: no settings without a view.
+        return self.config.new_leo_file_encoding
 
     def setHeadString(self, p: Position, s: str) -> None:
         """Set p's headline. Every view follows the head_changed event."""
@@ -522,20 +917,34 @@ class Outline:
         # Owned outright: the document knows its own name.
         return self.mFileName
 
-    def getLanguage(self, p: Position) -> str:
-        return self.c.getLanguage(p)
-
-    @property
-    def atFileCommands(self) -> Any:
-        return self.c.atFileCommands
-
     @property
     def config(self) -> Any:
-        return self.c.config if self.c else None
+        """This document's settings, or Leo's defaults when it has no view."""
+        if self.c is not None:
+            return self.c.config
+        if self._default_config is None:
+            self._default_config = DefaultConfig()
+        return self._default_config
 
     @property
     def target_language(self) -> str:
+        if self.c is None:
+            return self.config.getString('target-language') or 'python'
         return self.c.target_language
+
+    @property
+    def tab_width(self) -> int:
+        """The document's default tab width, from its settings."""
+        if self.c is None:
+            return self.config.getInt('tab-width') or -4
+        return self.c.tab_width
+
+    @property
+    def page_width(self) -> int:
+        """The document's default page width, from its settings."""
+        if self.c is None:
+            return self.config.getInt('page-width') or 132
+        return self.c.page_width
 
     # View operations. Stage 5 gives each view its own expansion state; stage 6
     # makes the model, not the widget, authoritative for body text. Until then
@@ -559,13 +968,46 @@ class Outline:
         self.c.setChanged()
 
     def alert(self, message: str) -> None:
+        if self.c is None:
+            g.es_print(message)  # No window to raise a dialog in.
+            return
         self.c.alert(message)
 
     def redraw(self, p: Position = None) -> None:
+        if self.c is None:
+            return  # Nothing is drawn, so nothing to redraw.
         self.c.redraw(p)
 
     def bodyWantsFocusNow(self) -> None:
+        if self.c is None:
+            return  # No widget can take focus.
         self.c.bodyWantsFocusNow()
+
+    # These are things a *window* does. The file machinery calls them around
+    # every read and write, so on an outline with no window they are no-ops
+    # rather than errors: there is no headline being edited to commit, no
+    # dialog to raise, and no selection to move.
+
+    def endEditing(self) -> None:
+        if self.c is None:
+            return
+        self.c.endEditing()
+
+    def init_error_dialogs(self) -> None:
+        self.ignored_at_file_nodes = []
+        self.orphan_at_file_nodes = []
+        if self.c is not None:
+            self.c.init_error_dialogs()
+
+    def raise_error_dialogs(self, kind: str = 'read') -> None:
+        if self.c is None:
+            return
+        self.c.raise_error_dialogs(kind)
+
+    def selectPosition(self, p: Position) -> None:
+        if self.c is None:
+            return
+        self.c.selectPosition(p)
 
     # @-others
 
