@@ -43,7 +43,7 @@ skipped items; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 900 tests, passing against **real PyQt6** and with no Qt at all |
+| 0 — Safety net | **done** — 908 tests, passing against **real PyQt6** and with no Qt at all |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -60,7 +60,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 900 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 908 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  546 files already formatted
@@ -69,7 +69,7 @@ $ PYTHONPATH=. python3 -m leo.scripts.check_leo_sync
 LeoPyRef.leo is in sync with all mirrored files.
 ```
 
-The same suite passes against **real PyQt6** in the project's `.venv` -- 900 tests, only
+The same suite passes against **real PyQt6** in the project's `.venv` -- 908 tests, only
 3 skips instead of 23, so every Qt-only test runs -- and the multi-view behaviour was
 driven through real Qt widgets and confirmed in the GUI by the fork's owner. Headless commander startup dropped from 0.22s to 0.04s, because
 importing Leo no longer imports Qt.
@@ -272,8 +272,68 @@ everything before this had been checked only against the null gui or a fake-Qt s
   until clicked. `Outline.update_other_views` now flushes it at the end of a command and
   after undo, and a test pins it.
 
+### First non-Leo view: `leo/tui`
+
+A read-only terminal browser (`python -m leo.tui FILE.leo`), written as the honest test
+of the model boundary rather than as a feature. A terminal has no widget wrappers at
+all, so anything the model cannot supply fails loudly instead of resolving quietly
+against a `Null*` object.
+
+Three results, all measured rather than argued:
+
+- **The view needed no frame access at all.** `leo/tui` contains zero references to
+  `c.frame` or `g.app.gui`. The entire commander surface it uses is `c.outline`,
+  `c.rootPosition`, `c.selectPosition`, `c.shortFileName` and `c.changed` — all
+  model-level. `model.FRAME_REACHES` records anything that changes, and a test asserts
+  it stays empty.
+- **A Qt window and a terminal view can share one outline, in one process, today.**
+  Shared model, independent folds, events reaching the terminal view, the Qt widget
+  updating. So **stage 7 is not required for heterogeneous views**, at least read-only —
+  each commander carries its own `gui`, and a read-only view never consults
+  `g.app.gui`. An *editable* terminal view would hit the singleton for dialogs,
+  clipboard and focus, so stage 7's scope is narrower than this plan assumed: it is
+  about input, not about rendering.
+- **The event bus is sufficient for a foreign view.** The terminal view subscribes to
+  the five signals and repaints on someone else's change, ignoring its own via `origin`
+  — the first consumer that was designed around the bus rather than working around its
+  absence, which is what `freewin` and `editpane` both had to do.
+
+Structure: `model.py` (no curses) and `screen.py` (pure `compose()` returning exactly
+`height` lines) are separate from the curses loop, so the view is testable with no
+terminal — the same trick that lets the null gui test Leo's core without Qt. Eight tests,
+and `--dump` prints one frame for use in a pipe.
+
+**Then it was made editable**, which is where the input-side coupling showed up:
+
+- **All 19 structural commands already work with a null frame** — insert, delete, the
+  four moves, promote, demote, clone, copy, paste, sort, mark, undo, redo and node
+  navigation. Not one failed. So the terminal view *drives Leo's own commands* rather
+  than reimplementing outline surgery, and the claim that the commands are the hard part
+  of a `leolib` is weaker than it looked: they are already view-agnostic. What they are
+  not is reachable without a commander.
+- **Headline text has the same widget-is-authoritative inversion that stage 6 fixed for
+  body text, and stage 6 did not fix it.** `LeoTree.onHeadChanged` reads the new headline
+  from `self.headline_wrapper(p)`, not from `p.h`. A view that changes `p.h` through the
+  model alone leaves that widget stale, and the `c.endEditing()` at the top of `u.undo`
+  then believes the user typed a headline edit: it pushes a spurious bead and silently
+  eats the next undo. Reproduced, and identical on `main`. The protocol a view must
+  follow is `tree.setHeadline` outbound and `tree.onHeadChanged` inbound — both
+  frame-level, both undocumented outside the source.
+- **A view must own a text wrapper.** `u.afterChangeBody`'s docstring makes it the
+  caller's contract to set the caret and selection, and it reads them from
+  `c.frame.body.wrapper`. Behind a `NullFrame` that is a plain `StringTextWrapper`,
+  which is exactly right for a terminal — so this is a constraint on `leolib`, not a
+  failing. Tracked in `model.WRAPPER_REACHES`, separate from `FRAME_REACHES`, which is
+  still empty.
+- Editing round-trips to disk: rename, body edit, save, reopen, content intact.
+
 ### What is *not* fixed yet
 
+- **Headline text is still widget-authoritative** (found by the editable terminal view,
+  above). Stage 6 made the model authoritative for *body* text and stopped there;
+  `onHeadChanged` still reads the headline from a widget, and any view that forgets
+  `tree.setHeadline` corrupts the undo stack. Stage 6's unfinished half, and it bites a
+  non-Qt view immediately.
 - **27 mechanical call sites still read the body through the widget.** Not a correctness
   bug any more (see stage 6 above), but they should be `c.getBodyText()`.
 - **`c.p` is still set inside `LeoTree.set_body_text_after_select`**, which is model
