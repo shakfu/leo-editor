@@ -24,6 +24,52 @@ PyQt6; `ruff`, `ty` and `check_leo_sync` are clean.
 
 ---
 
+## Pick up here
+
+**One decision is open, and it is the only thing blocking the last step.** The
+dependency work is finished and enforced by tests; what remains is where the
+files live.
+
+`leo/leolib/` holds `util.py`, `state.py`, `language_data.py`, `api.py` and an
+empty `__init__.py`. The eight model modules — `leoNodes`, `leoOutline`,
+`leoFileCommands`, `leoAtFile`, `leoShadow`, `leoImport`, `signal_manager`,
+`leoPluginRegistry` — still sit in `leo/core/`, even though nothing about their
+imports requires it any more. Moving them is `git mv` plus four mechanical
+follow-ups (below). The decision is what the old import paths should do:
+
+| option | cost |
+|---|---|
+| **Leave re-export shims** at `leo/core/leoNodes.py` etc. | Eight extra one-line files, two names per module. Nothing in Leo or in any plugin breaks. |
+| **Move and update all 110 in-tree files** | Cleanest result. Every out-of-tree plugin doing `from leo.core.leoNodes import Position` breaks on upgrade — that is most of them. |
+| **Don't move them** | Nothing breaks and nothing improves. The boundary is already correct and enforced; the location is cosmetic. Spend the effort on section 2 instead. |
+
+101 files import `leo.core.leoNodes`, nearly all of them only to name a
+`Position` or a `VNode` in an annotation.
+
+A second question follows only if they do move: keep the existing filenames
+(`leo/leolib/leoNodes.py` — least churn, easiest to diff against upstream Leo)
+or rename to fit the package (`leo/leolib/nodes.py`, `outline.py`, `at_file.py`
+— reads far better beside `util.py` and `state.py`).
+
+**If the move goes ahead, four things have to happen with it**, all of which
+`check_leo_sync` will catch if they do not:
+
+1. `git mv`, and change each file's own `@file` sentinel headline
+   (`# @+node:...: * @file leoNodes.py` → `* @file ../leolib/nodes.py`).
+2. Move the matching `<v t="..."><vh>@file ...</vh></v>` line in
+   `leo/core/LeoPyRef.leo`. @file nodes have no `<t>` entry and no children
+   there, so the one line is the whole registration.
+3. Update the moved modules' imports of *each other*.
+4. Give any newly written node a fresh gnx. A reused one makes two files stop
+   round-tripping, and it is not obvious from reading either of them.
+
+**Everything else on this list is unblocked and independent of that decision.**
+Section 2 (put a front end on `leolib`) is the one I would take next either
+way: nothing consumes the boundary from outside yet, so nothing proves it is
+usable.
+
+---
+
 ## 1. Verify by hand: two windows on one outline
 
 **The only claim in this branch with no automated cover.** No headless test can
@@ -124,15 +170,9 @@ which is what `leolib` already did in effect.
   needs its levels shifted; and a reused gnx makes two files stop
   round-tripping. `check_leo_sync` caught all of it, and nothing else did.
 
-**Still to do:**
-
-- [ ] **`git mv` the model into `leo/leolib/`.** `leoNodes`, `leoOutline`,
-      `leoFileCommands`, `leoAtFile`, `leoShadow`, `leoImport`,
-      `signal_manager`, `leoPluginRegistry`. Nothing blocks it any more — the
-      imports all point the right way. What it needs is a decision, because
-      101 files import `leo.core.leoNodes` and so does every third-party plugin
-      that names a `Position`: either leave re-export shims at the old paths,
-      or update 110 files and accept the break.
+**Still to do:** move the eight model modules into `leo/leolib/`. Nothing
+blocks it — the imports all point the right way — but it needs a decision about
+the old paths first. See **Pick up here** at the top of this file.
 
 ---
 
