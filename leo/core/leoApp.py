@@ -257,7 +257,7 @@ class LeoApp:
         self.already_open_files: list[str] = []
         self.dragging = False  # True: dragging.
         self.inBridge = False  # True: running from leoBridge module.
-        self.inScript: bool = False  # True: executing a script.
+        # See the inScript property, over leo.leolib.state.
         self.initing = True  # True: we are initing the app.
         self.initComplete = False  # True: late bindings are not allowed.
         self.initStyleFlag = False  # True: setQtStyle called.
@@ -302,7 +302,7 @@ class LeoApp:
         # @+<< LeoApp: scripting ivars >>
         # @+node:ekr.20161028040303.1: *5* << LeoApp: scripting ivars >>
         # For use by scripts. Cleared before running each script.
-        self.scriptDict: dict[str, Any] = {}
+        # See the scriptDict property, over leo.leolib.state.
         self.scriptResult: Any = None  # For use by leoPymacs.
         # For use by scripts. Never cleared automatically.
         self.permanentScriptDict: dict[str, Any] = {}
@@ -738,6 +738,31 @@ class LeoApp:
     @property
     def c(self) -> Cmdr | None:
         return self.log and self.log.c
+
+    # @+node:sa.20260909150000.1: *3* app.inScript & scriptDict properties
+    @property
+    def inScript(self) -> bool:
+        """
+        True while a script is running. The same flag as g.inScript.
+
+        Two names for one fact, and they were assigned together everywhere.
+        Properties over leo.leolib.state so that util.composeScript, which sets
+        it, does not need an application to record it in.
+        """
+        return leoLibState.inScript
+
+    @inScript.setter
+    def inScript(self, value: bool) -> None:
+        leoLibState.inScript = value
+
+    @property
+    def scriptDict(self) -> dict[str, Any]:
+        """Where a running script's context is left for the script to find."""
+        return leoLibState.script_dict
+
+    @scriptDict.setter
+    def scriptDict(self, value: dict[str, Any]) -> None:
+        leoLibState.script_dict = value
 
     # @+node:sa.20260909100000.3: *3* app.globalOpenDir property
     @property

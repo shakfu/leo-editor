@@ -45,10 +45,11 @@ import re
 import string
 import subprocess
 import sys
+import textwrap
 import time
 import traceback
 import types
-from typing import Any, TYPE_CHECKING
+from typing import cast, Any, TYPE_CHECKING
 import gettext
 import urllib
 import urllib.parse as urlparse
@@ -3741,6 +3742,143 @@ def new_cmd_decorator(name: str, ivars: list[str]) -> Callable:
 # @+node:sa.20260909130000.14: *3* util.command (decorator)
 # The spelling every caller uses: @g.command('name').
 command = Command
+
+
+# @+node:sa.20260909140000.2: ** util.The state proxies
+# app, unitTesting and the host flags, presented here exactly as leoGlobals
+# presents them. That is the whole point: a model module can be handed either
+# module as `g` and cannot tell the difference, which is what lets the model
+# stop importing leoGlobals at all.
+#
+# A module class rather than a module __getattr__, for the same reason
+# leoGlobals uses one: __getattr__ never sees an assignment, so the first
+# `g.app = x` would land in this module's dict and shadow state from then on.
+
+
+class _UtilModule(types.ModuleType):
+    """leo.leolib.util's module type. See the note above."""
+
+
+def _proxy_state(name: str) -> property:
+    def get(self: types.ModuleType) -> Any:
+        return getattr(state, name)
+
+    def set_(self: types.ModuleType, value: Any) -> None:
+        setattr(state, name, value)
+
+    return property(get, set_)
+
+
+for _name in ('app', 'unitTesting', 'inScript', 'in_bridge', 'in_leo_server', 'in_vs_code'):
+    setattr(_UtilModule, _name, _proxy_state(_name))
+    # Also in the module dict, where nothing reads it: unittest.mock asks
+    # whether an attribute is "local" before patching, and undoes a patch with
+    # delattr when the answer is no. See the same note in leoGlobals.
+    globals()[_name] = getattr(state, _name)
+
+sys.modules[__name__].__class__ = _UtilModule
+
+
+# @+node:sa.20260909160000.1: ** util.Files & Directories (moved later)
+# @+node:sa.20260909160000.2: *3* util.openWithFileName
+def openWithFileName(
+    fileName: str,
+    old_c: Cmdr | None = None,
+    # gui is a LeoGui; the annotation is Any because LeoGui is a view
+    # class and nothing here names one even for type checking.
+    gui: Any = None,
+) -> Cmdr:
+    """
+    Load any kind of file in the appropriate way:
+
+    Return the commander of the newly-opened file, which may be old_c or
+    another commander -- or None when there is no host to open a window in.
+    Opening a file means making a window, so it goes through state.file_opener;
+    leoGlobals installs Leo's load manager as it loads.
+    """
+    opener = state.file_opener
+    if opener is None:
+        # No host: nothing can open a window. Every caller is a commander
+        # command, so this cannot happen inside Leo, and the annotation says
+        # Cmdr rather than making six call sites test for a None they will
+        # never see.
+        return cast('Cmdr', None)
+    return opener(fileName, old_c, gui)
+
+
+# @+node:sa.20260909160000.3: ** util.Scripting (moved later)
+# @+node:sa.20260909160000.4: *3* util.getScript
+def getScript(
+    c: Outline | Cmdr,
+    p: Position | None,
+    useSelectedText: bool = True,
+    forcePythonSentinels: bool = True,
+    useSentinels: bool = True,
+) -> str:
+    """
+    Return the expansion of the selected text of node p.
+    Return the expansion of all of node p's body text if
+    p is not the current node or if there is no text selection.
+    """
+    # No window means no selection to prefer and no current node to fall back
+    # on: p.b is the whole answer. leolib reaches here through p.script.
+    w = c.frame.body.wrapper if c and c.frame else None
+    if not p:
+        p = c.p
+    try:
+        if state.in_bridge:
+            s = p.b
+        elif w and p == c.p and useSelectedText and w.hasSelection():
+            s = w.getSelectedText()
+        else:
+            s = p.b
+        # Remove extra leading whitespace so the user may execute indented code.
+        s = textwrap.dedent(s)
+        s = extractExecutableString(c, p, s)
+        script = composeScript(
+            c,
+            p,
+            s,
+            forcePythonSentinels=forcePythonSentinels,
+            useSentinels=useSentinels,
+        )
+    except Exception:
+        es_print("unexpected exception in getScript")
+        es_exception()
+        script = ''
+    return script
+
+
+# @+node:sa.20260909160000.5: *3* util.composeScript
+def composeScript(
+    c: Outline | Cmdr,
+    p: Position,
+    s: str,
+    forcePythonSentinels: bool = True,
+    useSentinels: bool = True,
+) -> str:
+    """Compose a script from p.b."""
+    if not s.strip():
+        return ''
+    at = c.atFileCommands
+    old_in_script = state.inScript
+    try:
+        # #1297: set inScript flags.
+        state.inScript = True
+        state.script_dict["script1"] = s
+        # Important: converts unicode to utf-8 encoded strings.
+        script = at.stringToString(
+            p.copy(),
+            s,
+            forcePythonSentinels=forcePythonSentinels,
+            sentinels=useSentinels,
+        )
+        # Important, the script is an **encoded string**, not a unicode string.
+        script = script.replace("\r\n", "\n")  # Use brute force.
+        state.script_dict["script2"] = script
+    finally:
+        state.inScript = old_in_script
+    return script
 
 
 # @-others

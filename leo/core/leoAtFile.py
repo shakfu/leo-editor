@@ -3023,7 +3023,7 @@ class AtFile:
                 at.error(f"ignoring @last directive in {p.h!r}")
                 g.es_print('@last is not valid in @clean nodes')
             # #1297.
-            elif g.app.inScript or g.unitTesting or p.isAnyAtFileNode():
+            elif g.inScript or g.unitTesting or p.isAnyAtFileNode():
                 # Convert to an verbatim line _without_ anything else.
                 self.putSentinel("@@last")
             else:
@@ -3034,7 +3034,7 @@ class AtFile:
                 at.error(f"ignoring @first directive in {p.h!r}")
                 g.es_print('@first is not valid in @clean nodes')
             # #1297.
-            elif g.app.inScript or g.unitTesting or p.isAnyAtFileNode():
+            elif g.inScript or g.unitTesting or p.isAnyAtFileNode():
                 # Convert to an verbatim line _without_ anything else.
                 self.putSentinel("@@first")
             else:

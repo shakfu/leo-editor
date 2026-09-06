@@ -32,6 +32,17 @@ from typing import Any
 from leo.leolib import language_data
 
 # @+others
+# @+node:sa.20260909140000.1: ** state: the application
+# Leo's process-wide application object, or None.
+#
+# It is the last thing the model asked leoGlobals for, and the reason leolib
+# has to install a minimal stand-in at all. Owning it here does not make it any
+# less of an application -- what it buys is that both leoGlobals and util can
+# present it as g.app, so the model can be handed either module and not know
+# the difference. g.app = x still works: the property on each module's class
+# writes through to this name.
+app: Any = None
+
 # @+node:sa.20260908160000.2: ** state: the flags
 # True while Leo's unit tests are running. Guards anything that would touch
 # the environment the tests run in -- g.chdir is the classic case.
@@ -84,6 +95,14 @@ hook_dispatcher: Any = None
 # there is any application at all, and the caller skips its bookkeeping when
 # nothing was registered. leoGlobals installs Leo's version.
 command_registrar: Any = None
+
+# Where g.getScript and mod_scripting leave the script they are running, for
+# the script itself to find: g.app.scriptDict is a property over this name.
+script_dict: dict[str, Any] = {}
+
+# Opens a file in the host and returns its commander, or None if there is no
+# host to open one in. leoGlobals installs Leo's load manager.
+file_opener: Any = None
 
 # The module `g` refers to. ivars2instance can be asked for an attribute of it
 # by name -- 'g' is a legal base in an ivars list, though nothing in Leo uses

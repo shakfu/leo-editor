@@ -1971,7 +1971,7 @@ class LocalConfigManager:
         return None
 
     # @+node:ekr.20120215072959.12538: *5* c.config.getSettingSource
-    def getSettingSource(self, setting: str) -> tuple[str, Any]:
+    def getSettingSource(self, setting: str) -> tuple[str, Any] | None:
         """return the name of the file responsible for setting."""
         if d := self.settingsDict:
             assert isinstance(d, g.SettingsDict), repr(d)

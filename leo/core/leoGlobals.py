@@ -27,7 +27,6 @@ import sys
 import types
 import subprocess
 import tempfile
-import textwrap
 import time
 import traceback
 from types import ModuleType
@@ -55,6 +54,9 @@ StringIO = io.StringIO
 # keeps working unchanged. See that module's docstring, and TODO.md.
 from leo.leolib import state as leoLibState
 from leo.leolib.util import (  # noqa: F401
+    composeScript,
+    getScript,
+    openWithFileName,
     Command,
     command,
     ivars2instance,
@@ -317,11 +319,9 @@ from leo.leolib.util import (  # noqa: F401
 # @+node:ekr.20220824084642.1: ** << leoGlobals: annotations >>
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core import LeoGlobals
-    from leo.core.leoApp import LeoApp
     from leo.core.leoCommands import Commands as Cmdr
-    from leo.core.leoGui import LeoGui, LeoKeyEvent, LeoFrame
+    from leo.core.leoGui import LeoKeyEvent, LeoFrame
     from leo.core.leoNodes import Position, VNode
-    from leo.core.leoOutline import Outline
     from leo.core.leoQt import QMouseEvent, QWidget, QEvent
     from leo.plugins.qt_idle_time import IdleTime as QtIdleTime
 
@@ -425,11 +425,11 @@ class CommanderCommand:
         commander_command_wrapper.__name__ = self.name
         commander_command_wrapper.__doc__ = func.__doc__
         global_commands_dict[self.name] = commander_command_wrapper
-        if app:
+        if g.app:
             from leo.core import leoCommands
 
             funcToMethod(func, leoCommands.Commands)
-            for c in app.commanders():
+            for c in g.app.commanders():
                 c.k.registerCommand(self.name, func)
         # Inject ivars for plugins_menu.py.
         func.is_command = True
@@ -440,8 +440,6 @@ class CommanderCommand:
 commander_command = CommanderCommand
 
 
-# @+node:ekr.20150508164812.1: *3* g.ivars2instance
-# @+node:ekr.20150508134046.1: *3* g.new_cmd_decorator (decorator)
 # @-others
 # @-<< define g.decorators >>
 # @+<< define regexes >>
@@ -454,7 +452,8 @@ commander_command = CommanderCommand
 # @-<< define regexes >>
 tree_popup_handlers: list[Callable] = []  # Set later.
 # The singleton app object. Set by runLeo.py.
-app: LeoApp = None  # type:ignore # There seems to be no way to init g.app here.
+# g.app is a property over leo.leolib.state; see "g.Mutable flags" below.
+# Bare `app` no longer resolves here -- always spell it g.app.
 
 # Global status vars.
 
@@ -1684,8 +1683,8 @@ class RedirectClass:
     # @+node:ekr.20041012082437.5: *5* write
     def write(self, s: str) -> None:
         if self.old:
-            if app.log:
-                app.log.put(s, from_redirect=True)
+            if g.app.log:
+                g.app.log.put(s, from_redirect=True)
             else:
                 self.old.write(s + '\n')
         else:
@@ -2329,13 +2328,13 @@ def dump_encoded_string(encoding: str, s: str) -> None:
 
 # @+node:ekr.20031218072017.1317: *4* g.file/module/plugin_date
 def module_date(mod: ModuleType, format: str = '') -> str:
-    theFile = g.os_path_join(app.loadDir, mod.__file__)
+    theFile = g.os_path_join(g.app.loadDir, mod.__file__)
     root, ext = g.os_path_splitext(theFile)
     return g.file_date(root + ".py", format=format)
 
 
 def plugin_date(plugin_mod: ModuleType, format: str = '') -> str:
-    theFile = g.os_path_join(app.loadDir, "..", "plugins", plugin_mod.__file__)
+    theFile = g.os_path_join(g.app.loadDir, "..", "plugins", plugin_mod.__file__)
     root, ext = g.os_path_splitext(theFile)
     return g.file_date(root + ".py", format=format)
 
@@ -2434,7 +2433,7 @@ def printGcObjects() -> int:
 
 # @+node:ekr.20031218072017.1593: *4* g.printGcRefs
 def printGcRefs() -> None:
-    refs = gc.get_referrers(app.windowList[0])
+    refs = gc.get_referrers(g.app.windowList[0])
     print(f"{len(refs):d} referrers")
 
 
@@ -2844,7 +2843,7 @@ def set_language(s: str, i: int, issue_errors_flag: bool = False) -> tuple[str, 
     i = g.skip_c_id(s, i)
     # Allow tcl/tk.
     arg = s[j:i].lower()
-    if app.language_delims_dict.get(arg):
+    if g.app.language_delims_dict.get(arg):
         language = arg
         delim1, delim2, delim3 = g.set_delims_from_language(language)
         return language, delim1, delim2, delim3
@@ -3056,21 +3055,6 @@ def init_dialog_folder(c: Cmdr | None, p: Position | None, use_at_path: bool = T
 def is_binary_string(s: str) -> bool:
     g.deprecated()
     return False
-
-
-# @+node:ekr.20090520055433.5945: *3* g.openWithFileName
-def openWithFileName(
-    fileName: str,
-    old_c: Cmdr | None = None,
-    gui: LeoGui | None = None,
-) -> Cmdr:
-    """
-    Load any kind of file in the appropriate way:
-
-    Return the commander of the newly-opened file, which may be old_c or another commander.
-    """
-    assert g.app.loadManager
-    return g.app.loadManager.openWithFileName(fileName, gui, old_c)
 
 
 # @+node:ekr.20240604112037.1: *3* g.readFile
@@ -4296,14 +4280,14 @@ def ecnl(tabName: str = 'Log') -> None:
 
 
 def ecnls(n: int, tabName: str = 'Log') -> None:
-    log = app.log
+    log = g.app.log
     if log and not log.isNull:
         while log.newlines < n:
             g.enl(tabName)
 
 
 def enl(tabName: str = 'Log') -> None:
-    log = app.log
+    log = g.app.log
     if log and not log.isNull:
         log.newlines += 1
         log.putnl(tabName)
@@ -4327,11 +4311,11 @@ def _es_to_log(*args: Args, **kwargs: KWargs) -> None:
     The first, third, fifth, etc. arg translated by g.translateString.
     Supports color, comma, newline, spaces and tabName keyword arguments.
     """
-    if not app or app.killed:
+    if not g.app or g.app.killed:
         return
-    if app.gui and app.gui.consoleOnly:
+    if g.app.gui and g.app.gui.consoleOnly:
         return
-    log = app.log
+    log = g.app.log
     # Compute the effective args.
     d: dict[str, bool | str] = {
         'color': '',
@@ -4350,10 +4334,10 @@ def _es_to_log(*args: Args, **kwargs: KWargs) -> None:
     newline = d.get('newline')
     s = g.translateArgs(args, d)
     # Do not call g.es, g.es_print, g.pr or g.trace here!
-    if app.batchMode:
-        if app.log:
-            app.log.put(s)
-    if log and (app.logInited or g.unitTesting):
+    if g.app.batchMode:
+        if g.app.log:
+            g.app.log.put(s)
+    if log and (g.app.logInited or g.unitTesting):
         if newline:
             s += '\n'
         log.put(s, color=color, tabName=tabName, nodeLink=d['nodeLink'])
@@ -4364,7 +4348,7 @@ def _es_to_log(*args: Args, **kwargs: KWargs) -> None:
             else:
                 log.newlines = 0
     else:
-        app.logWaiting.append(
+        g.app.logWaiting.append(
             (s, color, newline, d),
         )
 
@@ -4690,7 +4674,7 @@ def input_(message: str = '', c: Cmdr | None = None) -> str:
     c.executeScriptHelper binds 'input' to be a wrapper that calls g.input_
     with c and handler bound properly.
     """
-    if app.gui.isNullGui:
+    if g.app.gui.isNullGui:
         return ''
     # Prompt for input from the console, assuming there is one.
     from leo.core.leoQt import QtCore
@@ -4729,7 +4713,7 @@ if 0:  # Testing:
 
 # @+node:ekr.20031218072017.3150: *3* g.windows
 def windows() -> list | None:
-    return app.windowList if app else None
+    return g.app.windowList if g.app else None
 
 
 # @+node:ekr.20031218072017.2145: ** g.os_path_ Wrappers
@@ -4959,79 +4943,6 @@ def findNodeByPath(c: Cmdr, path: str) -> Position | None:
 
 # @-others
 # @+node:EKR.20040614071102.1: *3* g.getScript & helpers
-def getScript(
-    c: Outline | Cmdr,
-    p: Position | None,
-    useSelectedText: bool = True,
-    forcePythonSentinels: bool = True,
-    useSentinels: bool = True,
-) -> str:
-    """
-    Return the expansion of the selected text of node p.
-    Return the expansion of all of node p's body text if
-    p is not the current node or if there is no text selection.
-    """
-    # No window means no selection to prefer and no current node to fall back
-    # on: p.b is the whole answer. leolib reaches here through p.script.
-    w = c.frame.body.wrapper if c and c.frame else None
-    if not p:
-        p = c.p
-    try:
-        if g.app.inBridge:
-            s = p.b
-        elif w and p == c.p and useSelectedText and w.hasSelection():
-            s = w.getSelectedText()
-        else:
-            s = p.b
-        # Remove extra leading whitespace so the user may execute indented code.
-        s = textwrap.dedent(s)
-        s = g.extractExecutableString(c, p, s)
-        script = g.composeScript(
-            c,
-            p,
-            s,
-            forcePythonSentinels=forcePythonSentinels,
-            useSentinels=useSentinels,
-        )
-    except Exception:
-        g.es_print("unexpected exception in g.getScript")
-        g.es_exception()
-        script = ''
-    return script
-
-
-# @+node:ekr.20170228082641.1: *4* g.composeScript
-def composeScript(
-    c: Outline | Cmdr,
-    p: Position,
-    s: str,
-    forcePythonSentinels: bool = True,
-    useSentinels: bool = True,
-) -> str:
-    """Compose a script from p.b."""
-    if not s.strip():
-        return ''
-    at = c.atFileCommands
-    old_in_script = g.app.inScript
-    try:
-        # #1297: set inScript flags.
-        g.app.inScript = g.inScript = True
-        g.app.scriptDict["script1"] = s
-        # Important: converts unicode to utf-8 encoded strings.
-        script = at.stringToString(
-            p.copy(),
-            s,
-            forcePythonSentinels=forcePythonSentinels,
-            sentinels=useSentinels,
-        )
-        # Important, the script is an **encoded string**, not a unicode string.
-        script = script.replace("\r\n", "\n")  # Use brute force.
-        g.app.scriptDict["script2"] = script
-    finally:
-        g.app.inScript = g.inScript = old_in_script
-    return script
-
-
 # @+node:ekr.20060624085200: *3* g.handleScriptException
 def handleScriptException(
     c: Cmdr,
@@ -5838,7 +5749,7 @@ def _proxy_flag(name: str) -> property:
     return property(get, set_)
 
 
-for _flag in ('unitTesting', 'inScript', 'in_bridge', 'in_leo_server', 'in_vs_code'):
+for _flag in ('app', 'unitTesting', 'inScript', 'in_bridge', 'in_leo_server', 'in_vs_code'):
     setattr(_LeoGlobalsModule, _flag, _proxy_flag(_flag))
     # Also leave the name in this module's dict, where it is never read: the
     # property is a data descriptor, so it wins for both get and set. It is
@@ -5878,7 +5789,14 @@ def _register_command(name: str, func: Callable) -> bool:
     return True
 
 
+def _open_file(fileName: str, old_c: Any, gui: Any) -> Any:
+    """Open any kind of file the way Leo would. Installed as state.file_opener."""
+    assert g.app.loadManager
+    return g.app.loadManager.openWithFileName(fileName, gui, old_c)
+
+
 leoLibState.command_registrar = _register_command
+leoLibState.file_opener = _open_file
 leoLibState.globals_module = sys.modules[__name__]
 leoLibState.hook_dispatcher = _dispatch_hook
 leoLibState.log_sink = _es_to_log

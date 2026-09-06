@@ -145,28 +145,38 @@ class TestLeolibUtil(unittest.TestCase):
         """
         A module global that anything rebinds at run time must not be in util.
 
-        leoGlobals re-exports by value, so a moved global would leave two
-        copies: `g.unitTesting = True` would set leoGlobals' and util's readers
-        would go on seeing False. That is not hypothetical -- it is what
+        Re-exporting by value would leave two copies: `g.unitTesting = True`
+        would set leoGlobals' and util's readers would go on seeing False. That is not hypothetical -- it is what
         happened when unitTesting moved, and it showed up three test files
         later as a deleted working directory, because g.chdir returns early
         during tests and had stopped doing so.
         """
-        from leo.leolib import util
+        from leo.core import leoGlobals as g
+        from leo.leolib import state, util
 
-        for name in (
-            'app',
-            'unitTesting',
-            'inScript',
-            'in_bridge',
-            'in_leo_server',
-            'in_vs_code',
-            'tree_popup_handlers',
-            'console_encoding',
-        ):
+        # Not present at all: nothing in util needs them.
+        for name in ('tree_popup_handlers', 'console_encoding'):
             self.assertFalse(
                 hasattr(util, name), f"{name} is rebound at run time and cannot live in util"
             )
+
+        # Present, but as properties over state rather than as copies. util and
+        # leoGlobals both offer them, which is what lets a model module be
+        # handed either one as `g`. A write through either must reach state, or
+        # the two copies are back.
+        for name in ('app', 'unitTesting', 'inScript', 'in_bridge', 'in_leo_server', 'in_vs_code'):
+            self.assertIs(getattr(util, name), getattr(state, name), name)
+            self.assertIs(getattr(g, name), getattr(state, name), name)
+            original = getattr(state, name)
+            sentinel = object()
+            try:
+                setattr(util, name, sentinel)
+                self.assertIs(getattr(state, name), sentinel, f'util.{name} did not write through')
+                self.assertIs(getattr(g, name), sentinel, f'g.{name} did not follow')
+                setattr(g, name, original)
+                self.assertIs(getattr(state, name), original, f'g.{name} did not write through')
+            finally:
+                setattr(state, name, original)
 
     # @+node:sa.20260908190000.2: *3* TestLeolibUtil.test_runtime_patches_hit_both_modules
     def test_runtime_patches_hit_both_modules(self):
@@ -181,22 +191,41 @@ class TestLeolibUtil(unittest.TestCase):
         For g.es_print that means error, warning and internalError go on
         writing where the patch was meant to stop them.
 
-        Checked by reading the source, because the failure is invisible at run
-        time: everything keeps working, just not where the caller intended.
+        Checked on the parse tree of every file, because at run time the
+        failure is invisible: everything keeps working, just not where the
+        caller intended.
         """
-        import re
-
         from leo.leolib import util
 
-        names = {n for n in dir(util) if not n.startswith('_')}
+        # Names util presents as properties over state are exempt: a write
+        # through either module reaches state, so the two cannot drift. Only
+        # names util holds as ordinary module globals -- functions, mostly --
+        # need the double patch.
+        proxied = {n for n, v in vars(type(util)).items() if isinstance(v, property)}
+        names = {n for n in dir(util) if not n.startswith('_')} - proxied
         offenders = []
         for path in sorted(pathlib.Path(os.path.join(REPO, 'leo')).rglob('*.py')):
-            for i, line in enumerate(path.read_text(errors='replace').split('\n'), 1):
-                for m in re.finditer(r'\bg\.([A-Za-z_]\w*)\s*=[^=]', line):
-                    name = m.group(1)
-                    if name in names and f'util.{name}' not in line:
+            try:
+                tree = ast.parse(path.read_text(errors='replace'))
+            except SyntaxError:  # pragma: no cover
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Assign):
+                    continue
+                targets = [
+                    t
+                    for t in node.targets
+                    if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+                ]
+                patched = {t.attr for t in targets if t.value.id == 'util'}  # type:ignore
+                for t in targets:
+                    if (
+                        t.value.id == 'g'  # type:ignore
+                        and t.attr in names
+                        and t.attr not in patched
+                    ):
                         rel = path.relative_to(REPO)
-                        offenders.append(f'{rel}:{i}: g.{name} without util.{name}')
+                        offenders.append(f'{rel}:{t.lineno}: g.{t.attr} without util.{t.attr}')
         self.assertEqual(offenders, [], '\n'.join(offenders))
 
     # @-others

@@ -999,7 +999,9 @@ class LeoServer:
         self.bad_commands_list = self._bad_commands(self.dummy_c)
 
         # * Replacement instances to Leo's codebase : getScript, IdleTime and externalFilesController
-        g.getScript = self._getScript  # type:ignore
+        # Both names: getScript lives in leo.leolib.util and leoGlobals
+        # re-exports it, so patching one leaves the other original.
+        g.getScript = util.getScript = self._getScript  # type:ignore
         g.IdleTime = self._idleTime  # type:ignore
 
         # * hook open2 for commander creation completion and inclusion in windowList
