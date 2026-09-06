@@ -282,6 +282,31 @@ class TestLeolibBoundary(unittest.TestCase):
             differing, '', f"of {checked} files, these did not round-trip: {differing}"
         )
 
+    # @+node:sa.20260909180000.1: *3* TestLeolibBoundary.test_no_leoGlobals_anywhere
+    def test_no_leoGlobals_anywhere(self):
+        """
+        Opening and reading a real outline must not import leoGlobals.
+
+        leoGlobals is Leo's application module: 5,800 lines that know about the
+        log pane, the plugin controller, the load manager and the settings.
+        The model was written against it, and getting out from under it is what
+        leo.leolib.util and leo.leolib.state are for -- the model modules now
+        import `util as g`, and every name they use resolves there.
+
+        This is the assertion that says the split finished. It is stricter than
+        the view-module check above and easier to break: one `from leo.core
+        import leoGlobals as g` added to a model module puts all of it back.
+        """
+        out = run_isolated(f"""
+            import sys
+            from leo import leolib
+            leolib.open_outline({LEO_PY_REF!r})
+            print('MODULES', sorted(m for m in sys.modules if m.startswith('leo.')))
+        """)
+        loaded = eval(out.split('MODULES')[1].strip())  # noqa: S307
+        self.assertNotIn('leo.core.leoGlobals', loaded, f"leoGlobals came back: {loaded}")
+        self.assertNotIn('leo.core.leoApp', loaded, f"leoApp came back: {loaded}")
+
     # @+node:sa.20260906110000.7: *3* TestLeolibBoundary.test_module_count_stays_small
     def test_module_count_stays_small(self):
         """

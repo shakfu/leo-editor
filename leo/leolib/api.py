@@ -45,7 +45,11 @@ from __future__ import annotations
 import os
 from typing import Any, TYPE_CHECKING
 
-from leo.core import leoGlobals as g
+# util, not leoGlobals: this module is part of Leo's model, and the model
+# no longer needs anything leoGlobals owns. util offers every name it uses,
+# including g.app and the host flags, which are properties over
+# leo.leolib.state and so read and write exactly as they did.
+from leo.leolib import util as g
 from leo.leolib import state
 from leo.core import leoNodes
 from leo.core.leoOutline import Outline

@@ -24,7 +24,11 @@ import importlib
 from types import ModuleType
 from typing import Any
 
-from leo.core import leoGlobals as g
+# util, not leoGlobals: this module is part of Leo's model, and the model
+# no longer needs anything leoGlobals owns. util offers every name it uses,
+# including g.app and the host flags, which are properties over
+# leo.leolib.state and so read and write exactly as they did.
+from leo.leolib import util as g
 # @-<< leoPluginRegistry imports >>
 
 
