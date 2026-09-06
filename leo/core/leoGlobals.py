@@ -55,6 +55,11 @@ StringIO = io.StringIO
 # keeps working unchanged. See that module's docstring, and TODO.md.
 from leo.leolib import state as leoLibState
 from leo.leolib.util import (  # noqa: F401
+    Command,
+    command,
+    ivars2instance,
+    new_cmd_decorator,
+    doHook,
     comment_delims_from_extension,
     findAllValidLanguageDirectives,
     findFirstValidAtLanguageDirective,
@@ -375,48 +380,6 @@ def check_cmd_instance_dict(c: Cmdr, g: LeoGlobals) -> None:
                 g.trace('class mismatch', key, name)
 
 
-# @+node:ville.20090521164644.5924: *3* g.command (decorator)
-class Command:
-    """
-    A global decorator for creating commands.
-
-    This is the recommended way of defining all new commands, including
-    commands that could be defined inside a class. The typical usage is:
-
-        @g.command('command-name')
-        def A_Command(event):
-            c = event.get('c') if event else None
-            ...
-
-    g can *not* be used anywhere in this class!
-    """
-
-    def __init__(self, name: str, **kwargs: KWargs) -> None:
-        """Ctor for command decorator class."""
-        self.name = name
-
-    def __call__(self, func: Callable) -> Callable:
-        """Register command for all future commanders."""
-        global_commands_dict[self.name] = func
-        if not g.app:  # PR #4773
-            # This module has not been fully imported.
-            if False:
-                print(f"@g.command.__call__: {self.name:>35}")
-            return func
-
-        for c in app.commanders():
-            c.k.registerCommand(self.name, func)
-
-        # Inject ivars for plugins_menu.py.
-        func.__func_name__ = func.__name__  # For leoInteg.
-        func.is_command = True
-        func.command_name = self.name
-        return func
-
-
-command = Command
-
-
 # @+node:ekr.20171124070654.1: *3* g.command_alias
 def command_alias(alias: str, func: Callable) -> None:
     """Create an alias for the *already defined* method in the Commands class."""
@@ -478,63 +441,7 @@ commander_command = CommanderCommand
 
 
 # @+node:ekr.20150508164812.1: *3* g.ivars2instance
-def ivars2instance(c: Cmdr, g: LeoGlobals, ivars: list[str]) -> Any:
-    """
-    Return the instance of c given by ivars.
-    ivars is a list of strings.
-    A special case: ivars may be 'g', indicating the leoGlobals module.
-    """
-    if not ivars:
-        g.trace('can not happen: no ivars')
-        return None
-    ivar = ivars[0]
-    if ivar not in ('c', 'g'):
-        g.trace('can not happen: unknown base', ivar)
-        return None
-    obj = c if ivar == 'c' else g
-    for ivar in ivars[1:]:
-        obj = getattr(obj, ivar, None)
-        if not obj:
-            g.trace('can not happen: unknown attribute', obj, ivar, ivars)
-            break
-    return obj
-
-
 # @+node:ekr.20150508134046.1: *3* g.new_cmd_decorator (decorator)
-def new_cmd_decorator(name: str, ivars: list[str]) -> Callable:
-    """
-    Return a new decorator for a command with the given name.
-    Compute the class *instance* using the ivar string or list.
-
-    Don't even think about removing the @cmd decorators!
-    See https://github.com/leo-editor/leo-editor/issues/325
-    """
-
-    def _decorator(func: Callable) -> Callable:
-
-        def new_cmd_wrapper(event: LeoKeyEvent) -> None:
-            if isinstance(event, dict):
-                c = event.get('c')
-            else:
-                c = event.c
-            self = g.ivars2instance(c, g, ivars)
-            try:
-                # Don't use a keyword for self.
-                # This allows the VimCommands class to use vc instead.
-                func(self, event=event)
-            except Exception:
-                g.es_exception()
-
-        new_cmd_wrapper.__func_name__ = func.__name__  # For leoInteg.
-        new_cmd_wrapper.__name__ = name
-        new_cmd_wrapper.__doc__ = func.__doc__
-        # Put the *wrapper* into the global dict.
-        global_commands_dict[name] = new_cmd_wrapper
-        return func  # The decorator must return the func itself.
-
-    return _decorator
-
-
 # @-others
 # @-<< define g.decorators >>
 # @+<< define regexes >>
@@ -4005,34 +3912,28 @@ act_on_node = dummy_act_on_node
 
 
 # @+node:ekr.20031218072017.1596: *3* g.doHook
-def doHook(tag: str, *args: Args, **kwargs: KWargs) -> Any:
+def _dispatch_hook(tag: str, kwargs: KWargs) -> Any:
     """
-    This global function calls a hook routine. Hooks are identified by the
-    tag param.
+    Call Leo's hook handler for the given tag. Installed as state.hook_dispatcher.
 
-    Returns the value returned by the hook routine, or None if the there is
-    an exception.
+    Returns the value the hook routine returned, or None if it raised.
 
-    We look for a hook routine in three places:
+    The handler is looked for in three places:
     1. c.hookFunction
     2. app.hookFunction
     3. leoPlugins.doPlugins()
 
-    Set app.hookError on all exceptions.
-    Scripts may reset app.hookError to try again.
+    Sets app.hookError on any exception; a script may clear it to try again.
+    This is the half of g.doHook that needs a plugin system. util.doHook is
+    what callers use.
     """
     if g.app.killed or g.app.hookError:
         return None
-    if g.unitTesting:
-        return None  # PR #4773
-    if args:
-        # A minor error in Leo's core.
-        g.pr(f"***ignoring args param.  tag = {tag}")
     if not g.app.enablePlugins:
         if tag in ('open0', 'start1'):
             g.warning("Plugins disabled: use_plugins is 0 in a leoSettings.leo file.")
         return None
-    # Get the hook handler function.  Usually this is doPlugins.
+    # Get the hook handler function. Usually this is doPlugins.
     c = kwargs.get("c")
     # pylint: disable=consider-using-ternary
     f = (c and c.hookFunction) or g.app.hookFunction
@@ -4040,8 +3941,6 @@ def doHook(tag: str, *args: Args, **kwargs: KWargs) -> Any:
         assert g.app.pluginsController
         g.app.hookFunction = f = g.app.pluginsController.doPlugins
     try:
-        # Pass the hook to the hook handler.
-        # g.pr('doHook',f.__name__,keywords.get('c'))
         return f(tag, kwargs)
     except Exception:
         g.es_exception()
@@ -5006,7 +4905,7 @@ def execute_shell_commands(
     """
     if isinstance(commands, str):
         commands = [commands]
-    for command in commands:
+    for command in commands:  # noqa: F402
         wait = not command.startswith('&')
         if trace:
             g.trace(command)
@@ -5964,6 +5863,24 @@ def _error_color_from_settings() -> str | None:
     return g.app.config.getColor('log-error-color') if g.app and g.app.config else None
 
 
+def _register_command(name: str, func: Callable) -> bool:
+    """
+    Register a command with every commander that exists. Return False if none can.
+
+    Installed as state.command_registrar. An @g.command decorator runs when its
+    module is imported, which is often before there is an application at all;
+    False tells util.Command to stop there, as it always did.
+    """
+    if not g.app:  # PR #4773
+        return False
+    for c in g.app.commanders():
+        c.k.registerCommand(name, func)
+    return True
+
+
+leoLibState.command_registrar = _register_command
+leoLibState.globals_module = sys.modules[__name__]
+leoLibState.hook_dispatcher = _dispatch_hook
 leoLibState.log_sink = _es_to_log
 leoLibState.error_color_hook = _error_color_from_settings
 # @-others

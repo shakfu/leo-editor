@@ -3617,6 +3617,132 @@ def setGlobalOpenDir(fileName: str) -> None:
         state.global_open_dir = os_path_dirname(fileName)
 
 
+# @+node:sa.20260909120000.2: *3* util.doHook
+def doHook(tag: str, *args: Args, **kwargs: KWargs) -> Any:
+    """
+    Call the hook routine registered for tag, if a host registered one.
+
+    Returns whatever the hook returned, or None -- including when nothing is
+    listening, which is the case for any caller with no plugin system.
+    leoGlobals installs Leo's dispatcher in state.hook_dispatcher as it loads,
+    so inside Leo this behaves exactly as it always did.
+    """
+    if state.unitTesting:
+        return None  # PR #4773
+    if args:
+        # A minor error in Leo's core.
+        pr(f"***ignoring args param.  tag = {tag}")
+    dispatch = state.hook_dispatcher
+    return dispatch(tag, kwargs) if dispatch is not None else None
+
+
+# @+node:sa.20260909130000.10: ** util.Commands
+# Registering a command needs the commanders that already exist, which is
+# a fact about a running application. That part is state.command_registrar.
+# @+node:sa.20260909130000.11: *3* util.ivars2instance
+def ivars2instance(c: Cmdr, g: Any, ivars: list[str]) -> Any:
+    """
+    Return the instance of c given by ivars.
+    ivars is a list of strings.
+    A special case: ivars may be 'g', indicating the leoGlobals module.
+    """
+    if not ivars:
+        g.trace('can not happen: no ivars')
+        return None
+    ivar = ivars[0]
+    if ivar not in ('c', 'g'):
+        g.trace('can not happen: unknown base', ivar)
+        return None
+    obj = c if ivar == 'c' else g
+    for ivar in ivars[1:]:
+        obj = getattr(obj, ivar, None)
+        if not obj:
+            g.trace('can not happen: unknown attribute', obj, ivar, ivars)
+            break
+    return obj
+
+
+# @+node:sa.20260909130000.12: *3* util.Command
+class Command:
+    """
+    A global decorator for creating commands.
+
+    This is the recommended way of defining all new commands, including
+    commands that could be defined inside a class. The typical usage is:
+
+        @g.command('command-name')
+        def A_Command(event):
+            c = event.get('c') if event else None
+            ...
+
+    Registering with the commanders that already exist is a host's job, so
+    it goes through state.command_registrar: a decorator runs when its
+    module is imported, often before there is any application.
+    """
+
+    def __init__(self, name: str, **kwargs: KWargs) -> None:
+        """Ctor for command decorator class."""
+        self.name = name
+
+    def __call__(self, func: Callable) -> Callable:
+        """Register command for all future commanders."""
+        global_commands_dict[self.name] = func
+        registrar = state.command_registrar
+        if registrar is None or not registrar(self.name, func):
+            # No application yet, or none at all: nothing to register with,
+            # and nothing that would read the ivars below.
+            return func
+
+        # Inject ivars for plugins_menu.py.
+        func.__func_name__ = func.__name__  # For leoInteg.
+        func.is_command = True
+        func.command_name = self.name
+        return func
+
+
+# @+node:sa.20260909130000.13: *3* util.new_cmd_decorator
+def new_cmd_decorator(name: str, ivars: list[str]) -> Callable:
+    """
+    Return a new decorator for a command with the given name.
+    Compute the class *instance* using the ivar string or list.
+
+    Don't even think about removing the @cmd decorators!
+    See https://github.com/leo-editor/leo-editor/issues/325
+    """
+
+    def _decorator(func: Callable) -> Callable:
+
+        # `event` is a LeoKeyEvent or a dict; the annotation is Any because
+        # LeoKeyEvent lives in leoGui, and nothing in this module names a
+        # view class even for type checking.
+        def new_cmd_wrapper(event: Any) -> None:
+            if isinstance(event, dict):
+                c = event.get('c')
+            else:
+                c = event.c
+            self = ivars2instance(c, state.globals_module, ivars)
+            try:
+                # Don't use a keyword for self.
+                # This allows the VimCommands class to use vc instead.
+                func(self, event=event)
+            except Exception:
+                es_exception()
+
+        new_cmd_wrapper.__func_name__ = func.__name__  # For leoInteg.
+        new_cmd_wrapper.__name__ = name
+        new_cmd_wrapper.__doc__ = func.__doc__
+        # Put the *wrapper* into the global dict.
+        global_commands_dict[name] = new_cmd_wrapper
+        return func  # The decorator must return the func itself.
+
+    return _decorator
+
+
+# @+node:sa.20260909130000.14: *3* util.command (decorator)
+# The spelling every caller uses: @g.command('name').
+command = Command
+
+
 # @-others
 # @@language python
 # @@tabwidth -4

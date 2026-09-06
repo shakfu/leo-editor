@@ -48,10 +48,23 @@ class TestLeolibUtil(unittest.TestCase):
         """
         with open(UTIL_PY) as f:
             tree = ast.parse(f.read())
+
+        # A function that takes a parameter named g is talking about its
+        # argument, not about leoGlobals. ivars2instance is the only one: it is
+        # handed the module to walk, which is how it works with none imported.
+        exempt = []
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                a = n.args
+                if any(x.arg == 'g' for x in a.posonlyargs + a.args + a.kwonlyargs):
+                    exempt.append((n.lineno, n.end_lineno))
         bad = [
             f'line {n.lineno}'
             for n in ast.walk(tree)
-            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == 'g'
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == 'g'
+            and not any(a <= n.lineno <= b for a, b in exempt)
         ]
         self.assertEqual(bad, [], f"util reaches for g: {bad}")
         names = [

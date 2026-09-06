@@ -207,13 +207,14 @@ class BridgeController:
         if self.verbose:
             self.reportDirectories()
         self.adjustSysPath()
-        # Kill all event handling if plugins not loaded.
+        # Kill all event handling if plugins not loaded. Clearing the
+        # dispatcher is what g.doHook consults; it used to be done by
+        # replacing g.doHook with a stub, which now would leave util's copy --
+        # the one every other module calls -- still dispatching.
         if not self.loadPlugins:
+            from leo.leolib import state as leoLibState
 
-            def dummyDoHook(tag: str, *args: Args, **keys: KWargs) -> None:
-                pass
-
-            g.doHook = dummyDoHook  # type:ignore
+            leoLibState.hook_dispatcher = None
         g.doHook("start1")  # Load plugins.
         g.app.computeSignon()
         g.app.initing = False

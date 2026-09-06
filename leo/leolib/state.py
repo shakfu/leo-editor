@@ -68,6 +68,28 @@ log_sink: Any = None
 # outline's settings; without a host, callers fall back to 'red'.
 error_color_hook: Any = None
 
+# @+node:sa.20260909120000.1: ** state: the plugin seam
+# Who handles g.doHook, or None if nobody does.
+#
+# Called as hook_dispatcher(tag, kwargs). leoGlobals installs Leo's real
+# dispatcher as it loads -- the one that consults c.hookFunction, then
+# app.hookFunction, then the plugins controller, and disables itself on error.
+# With no host there is no plugin system, so doHook returns None, which is what
+# it already did for leolib: its minimal app sets enablePlugins to False for
+# exactly this reason.
+hook_dispatcher: Any = None
+
+# Registers a command with the commanders that already exist, and reports
+# whether it could: an @g.command decorator runs at import time, often before
+# there is any application at all, and the caller skips its bookkeeping when
+# nothing was registered. leoGlobals installs Leo's version.
+command_registrar: Any = None
+
+# The module `g` refers to. ivars2instance can be asked for an attribute of it
+# by name -- 'g' is a legal base in an ivars list, though nothing in Leo uses
+# it -- and util has no other way to answer.
+globals_module: Any = None
+
 # @+node:sa.20260909100000.1: ** state: the language tables
 # What a .py file is written in, and what a Python comment starts with. The
 # readers and writers of external files cannot do their job without this, and
