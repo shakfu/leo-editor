@@ -14,14 +14,13 @@ leolib                the model and its machinery. No view, ever.
    +-- leoweb         the web front end      (today: leoserver, as a seed)
 ```
 
-**Where it stands.** `leolib` exists and can open, create, edit, view and save
-`.leo` files, including every `@<file>` directive. Opening `LeoPyRef.leo` and
-reading all 376 of its external files puts 14 `leo.*` entries in `sys.modules`,
-none of them a view module; the same file through `leoBridge` puts in 102, nine
-of them views. The package now holds three modules of its own — `util`, `state`
-and `api` — but the model still lives in `leo/core`; see section 3. None of the
-three front ends uses it yet. 941 tests pass headless and under real PyQt6;
-`ruff`, `ty` and `check_leo_sync` are clean.
+**Where it stands.** `leolib` can open, create, edit, view and save `.leo`
+files, including every `@<file>` directive, and **the model no longer imports
+`leoGlobals` or any view module.** Opening `LeoPyRef.leo` and reading all 376 of
+its external files imports 13 `leo.*` modules; the same file through `leoBridge`
+imports 105. The model still lives in `leo/core`; see section 3. None of the
+three front ends uses `leolib` yet. 942 tests pass headless and under real
+PyQt6; `ruff`, `ty` and `check_leo_sync` are clean.
 
 ---
 
@@ -70,63 +69,70 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 
 ## 3. Make `leolib` a package, not a facade
 
-`leo/leolib/` now holds three modules of its own:
+`leo/leolib/` holds five modules:
 
 | module | what it is |
 |---|---|
-| `util.py` | 273 names — everything in `leoGlobals` that never reads `g.app`. Imports nothing from Leo but `state`. |
-| `state.py` | The five flags Leo rebinds while it runs, plus the reporting seam. Imports nothing at all. |
+| `util.py` | Everything in `leoGlobals` that never reads `g.app`, plus the seams below. 299 names. |
+| `state.py` | The names Leo rebinds while it runs: `app`, the host flags, the language tables, and the four seams. Imports only `language_data`. |
+| `language_data.py` | Comment delimiters and file extensions. Imports nothing. |
 | `api.py` | The library: `open_outline`, `save`, `tangle`, `write_external_files`. |
+| `__init__.py` | Empty of imports, so `leoGlobals` can import `util` without a cycle. |
 
 `leoGlobals` imports every name in `util` back, so `g.splitLines` and
-`util.splitLines` are the same object and no caller changed. It is 6,076 lines,
-down from 8,975. The arrow points one way: `leoGlobals` depends on `util`,
-never the reverse, and `test_leolib_util` fails the build if that changes.
+`util.splitLines` are the same object and no caller changed. It is 5,816 lines,
+down from 8,975.
 
-**What the split cost, and what it taught.** Three rules came out of it, each
-found by a failure rather than by design:
+**The model imports `util as g`, not `leoGlobals`.** All 983 of its `g.<name>`
+uses resolve through `util` and `state`, `g.app` included: `app` and the host
+flags are properties over `state` on *both* modules, so a model module cannot
+tell which one it was handed. `test_no_leoGlobals_anywhere` says so, and is
+easy to break — one `from leo.core import leoGlobals as g` in a model module
+puts all 5,800 lines back.
+
+**The four seams**, each replacing something the model used to ask `g.app` for:
+
+| seam | replaced |
+|---|---|
+| `state.log_sink` | `g.es` writing to the log pane |
+| `state.hook_dispatcher` | `g.doHook` and the plugin controller |
+| `state.command_registrar` | `@g.command` registering with open commanders |
+| `state.file_opener` | `g.openWithFileName` making a window |
+
+`leoGlobals` installs Leo's real implementation of each as it loads, so inside
+Leo nothing changed. With no host each is `None` and the operation is a no-op,
+which is what `leolib` already did in effect.
+
+**Three rules came out of the split**, each found by a failure:
 
 - *A name something rebinds at run time cannot be re-exported by value.*
   `g.unitTesting = True` sets `leoGlobals`' copy; a reader in `util` goes on
   seeing `False`. `g.chdir` returns early during tests, stopped doing so, and a
   test three files later found its working directory deleted. Those names live
-  in `state.py`, and `leoGlobals` presents them through a module *class* with
-  properties — a module `__getattr__` would be shadowed by the first assignment.
+  in `state` and are presented through a module *class* with properties — a
+  module `__getattr__` never sees an assignment, so the first write would
+  shadow `state` from then on.
 - *The same applies to functions Leo swaps out.* `leoApp` redirects stdout under
-  pythonw, `leoserver` redirects the log to its client, `mod_speedups`
-  substitutes faster path helpers. All three now patch `g.<name>` **and**
-  `util.<name>`; `test_runtime_patches_hit_both_modules` reads the source to
-  enforce it, because at run time the failure is silent.
+  pythonw, `leoserver` redirects the log, `mod_speedups` substitutes path
+  helpers, the Pygments colorizer replaces `isValidLanguage`. All four patch
+  `g.<name>` **and** `util.<name>`; `test_runtime_patches_hit_both_modules`
+  reads every file's parse tree to enforce it, because at run time the failure
+  is silent — everything keeps working, just not where the caller intended.
 - *Moving code between Leo files means moving sentinels.* A `<< section >>`
-  whose body all moved has to go completely, or the reference left in the root's
-  body has no node behind it; and a moved body carrying sentinels of its own
-  needs its levels shifted. Two gnx collisions came from reusing ids. All three
-  were caught by `check_leo_sync`, and by nothing else.
+  whose body all moved has to go completely, or the reference left in the
+  root's body has no node behind it; a moved body carrying sentinels of its own
+  needs its levels shifted; and a reused gnx makes two files stop
+  round-tripping. `check_leo_sync` caught all of it, and nothing else did.
 
 **Still to do:**
 
-- [ ] **The model needs 13 names that `leoGlobals` still owns**, at 137 call
-      sites — down from 51 names and 983 sites. In order of weight:
-      `g.app` (77 uses), `g.doHook` (24), `g.command` and `g.new_cmd_decorator`
-      (12), `g.setGlobalOpenDir` (10), `g.getOutputNewline` (5), the five
-      language-table helpers (7), `g.getScript` and `g.openWithFileName` (2).
-      Each needs a seam of its own, and the shape is now established:
-      `state.log_sink` is the worked example.
-- [ ] **The language tables are the easiest of them.** `leoLanguageData` already
-      holds the data; the helpers read `g.app.language_delims_dict` only because
-      `LeoApp` copies it there and a user can extend it. A hook like
-      `state.log_sink` closes this.
-- [ ] **`g.app` itself is the last one and the biggest.** `_MinimalApp` exists
-      because of it. Everything left on it is either a window (`doHook`'s plugin
-      controller, `getScript`'s frame) or settings (`getOutputNewline`).
 - [ ] **`git mv` the model into `leo/leolib/`.** `leoNodes`, `leoOutline`,
-      `leoFileCommands`, `leoAtFile`, `leoShadow`, `leoLanguageData`,
-      `signal_manager`, `leoPluginRegistry`. Worth doing when the list above is
-      empty and not before: while they still import `leoGlobals`, moving them
-      makes `leo/leolib` depend on `leo/core`, which is the wrong direction and
-      harder to see once the files have moved. `check_leo_sync` pairs
-      `leo/core/*.py` against nodes in `LeoPyRef.leo` and changes in the same
-      commit.
+      `leoFileCommands`, `leoAtFile`, `leoShadow`, `leoImport`,
+      `signal_manager`, `leoPluginRegistry`. Nothing blocks it any more — the
+      imports all point the right way. What it needs is a decision, because
+      101 files import `leo.core.leoNodes` and so does every third-party plugin
+      that names a `Position`: either leave re-export shims at the old paths,
+      or update 110 files and accept the break.
 
 ---
 
@@ -232,7 +238,7 @@ Not oversights — each was investigated and left deliberately.
 ## Running the checks
 
 ```bash
-uv run python run_ci_unit_tests.py      # 941 tests; 4 skips under Qt, 23 without
+uv run python run_ci_unit_tests.py      # 942 tests; 4 skips under Qt, 23 without
 uv run ruff check leo
 uv run ruff format --check leo
 uv run ty check leo
