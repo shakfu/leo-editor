@@ -18,7 +18,6 @@ import platform
 from leo.core import leoGlobals as g
 from leo.leolib import state as leoLibState
 from leo.leolib import util
-from leo.core import leoLanguageData
 from leo.core import leoPluginRegistry
 from leo.core import leoExternalFiles
 from leo.core.leoCache import GlobalCacher
@@ -181,7 +180,7 @@ class LeoApp:
         # @+node:ekr.20161028035924.1: *5* << LeoApp: global directories >>
         self.extensionsDir = ''  # The leo/extensions directory
         self.globalConfigDir = ''  # leo/config directory
-        self.globalOpenDir = ''  # The directory last used to open a file.
+        # See the globalOpenDir property, over leo.leolib.state.
         self.homeDir = ''  # The user's home directory.
         self.homeLeoDir = ''  # The user's home/.leo directory.
         self.leoEditorDir = ''  # The leo-editor directory.
@@ -319,26 +318,18 @@ class LeoApp:
 
     # @+node:ekr.20141102043816.5: *5* app.define_delegate_language_dict
     def define_delegate_language_dict(self) -> None:
-        self.delegate_language_dict: dict[str, str] = {
-            # Keys are new language names.
-            "codon":      "python",
-            "elisp":      "lisp",
-            "glsl":       "c",
-            "handlebars": "html",
-            "hbs":        "html",
-            "less":       "css",
-            "katex":      "html",  # Leo 6.8.4
-            "mathjax":    "html",  # Leo 6.8.4
-            "toml": "ini",
-            # Values are existing languages in leo/modes.
-        }  # fmt: skip
+        # The same dict leo.leolib.state holds, not a copy. g.isValidLanguage
+        # consults it, and a reader of external files must be able to.
+        self.delegate_language_dict: dict[str, str] = leoLibState.delegate_language_dict
 
     # @+node:ekr.20120522160137.9911: *5* app.define_extension_dict
     def define_extension_dict(self) -> None:
         # Keys are extensions, values are languages
         # Defined in leoLanguageData: the readers and writers need
         # this with no application running.
-        self.extension_dict: dict[str, str] = dict(leoLanguageData.extension_dict)
+        # The same dict leo.leolib.state holds, not a copy: extending it
+        # here extends the one the readers of external files consult.
+        self.extension_dict: dict[str, str] = leoLibState.extension_dict
 
         # These aren't real languages, or have no delims...
         # cvs_commit, dsssl, embperl, freemarker, hex, jcl,
@@ -359,11 +350,7 @@ class LeoApp:
         # Used by importCommands.languageForExtension.
         # Keys are extensions, values are corresponding mode file (without .py)
         # A value of 'none' is a signal to unit tests that no extension file exists.
-        self.extra_extension_dict = {
-            'pod': 'perl',
-            'unknown_language': 'none',
-            'w': 'c',
-        }  # fmt: skip
+        self.extra_extension_dict = leoLibState.extra_extension_dict
 
     # @+node:ekr.20031218072017.1417: *5* app.define_global_constants
     def define_global_constants(self) -> None:
@@ -377,7 +364,7 @@ class LeoApp:
     def define_language_delims_dict(self) -> None:
         # Defined in leoLanguageData: the readers and writers need
         # this with no application running.
-        self.language_delims_dict: dict[str, str] = dict(leoLanguageData.language_delims_dict)
+        self.language_delims_dict: dict[str, str] = leoLibState.language_delims_dict
 
     # @+node:ekr.20120522160137.9910: *5* app.define_language_extension_dict
     def define_language_extension_dict(self) -> None:
@@ -386,7 +373,7 @@ class LeoApp:
         # Keys are languages, values are extensions.
         # Defined in leoLanguageData: the readers and writers need
         # this with no application running.
-        self.language_extension_dict: dict[str, str] = dict(leoLanguageData.language_extension_dict)
+        self.language_extension_dict: dict[str, str] = leoLibState.language_extension_dict
 
         # These aren't real languages, or have no delims...
         # cvs_commit, dsssl, embperl, freemarker, hex, jcl,
@@ -751,6 +738,22 @@ class LeoApp:
     @property
     def c(self) -> Cmdr | None:
         return self.log and self.log.c
+
+    # @+node:sa.20260909100000.3: *3* app.globalOpenDir property
+    @property
+    def globalOpenDir(self) -> str:
+        """
+        The directory last used to open a file. Offered by the file dialogs.
+
+        A property over leo.leolib.state so that g.setGlobalOpenDir, which the
+        readers and writers call on every file they touch, does not need an
+        application to record it.
+        """
+        return leoLibState.global_open_dir
+
+    @globalOpenDir.setter
+    def globalOpenDir(self, value: str) -> None:
+        leoLibState.global_open_dir = value
 
     # @+node:sa.20260908190000.1: *3* app.translateToUpperCase property
     @property

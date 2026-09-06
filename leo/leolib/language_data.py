@@ -1,5 +1,5 @@
 # @+leo-ver=5-thin
-# @+node:sa.20260906150000.1: * @file leoLanguageData.py
+# @+node:sa.20260906150000.1: * @file ../leolib/language_data.py
 """
 Language data: comment delimiters and file extensions.
 
@@ -9,14 +9,16 @@ they need to know it with no application running. It lived on the LeoApp
 singleton, which meant leolib could not read an @file node without booting an
 application it has no use for.
 
-LeoApp copies these into g.app.language_delims_dict, g.app.extension_dict and
-g.app.language_extension_dict, which stay the names the rest of Leo uses.
+leo.leolib.state holds the live copies, and both LeoApp and leolib's minimal
+app point their own attributes at those same dicts -- the same objects, not
+copies, so a user who extends g.app.language_delims_dict extends the one the
+readers consult. The names on g.app stay what the rest of Leo uses.
 """
 
-# @+<< leoLanguageData declarations >>
-# @+node:sa.20260906150000.2: ** << leoLanguageData declarations >>
+# @+<< language_data declarations >>
+# @+node:sa.20260906150000.2: ** << language_data declarations >>
 from __future__ import annotations
-# @-<< leoLanguageData declarations >>
+# @-<< language_data declarations >>
 
 # @+others
 # @+node:sa.20260906150000.3: ** extension_dict

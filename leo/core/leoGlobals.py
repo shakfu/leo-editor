@@ -55,6 +55,13 @@ StringIO = io.StringIO
 # keeps working unchanged. See that module's docstring, and TODO.md.
 from leo.leolib import state as leoLibState
 from leo.leolib.util import (  # noqa: F401
+    comment_delims_from_extension,
+    findAllValidLanguageDirectives,
+    findFirstValidAtLanguageDirective,
+    getOutputNewline,
+    isValidLanguage,
+    setGlobalOpenDir,
+    set_delims_from_language,
     _context,
     caller,
     chdir,
@@ -2620,55 +2627,6 @@ def printDiffTime(message: str, start: float) -> float:
 
 
 # @+node:ekr.20031218072017.1380: ** g.Directives
-# @+node:EKR.20040504150046.4: *3* g.comment_delims_from_extension
-def comment_delims_from_extension(filename: str) -> tuple[str, str, str]:
-    """
-    Return the comment delims corresponding to the filename's extension.
-    """
-    if filename.startswith('.'):
-        root, ext = '', filename
-    else:
-        root, ext = os.path.splitext(filename)
-    if ext == '.tmp':
-        root, ext = os.path.splitext(root)
-    language = g.app.extension_dict.get(ext[1:], '')
-    if ext:
-        return g.set_delims_from_language(language)
-    g.trace(f"unknown extension: {ext!r}, filename: {filename!r}, root: {root!r}")
-    return '', '', ''
-
-
-# @+node:ekr.20170201150505.1: *3* g.findAllValidLanguageDirectives
-def findAllValidLanguageDirectives(s: str) -> list:
-    """
-    Return list of all languages for which there is a valid @language
-    directive in s.
-    """
-    if not s.strip():
-        return []
-    languages = set()
-    for m in g.g_language_pat.finditer(s):
-        language = m.group(1)
-        if g.isValidLanguage(language):
-            languages.add(language)
-    return list(sorted(languages))
-
-
-# @+node:ekr.20170127142001.5: *3* g.findFirstAtLanguageDirective
-def findFirstValidAtLanguageDirective(s: str) -> str:
-    """
-    Return the first language for which there is a valid @language
-    directive in s.
-    """
-    if not s.strip():
-        return ''
-    for m in g.g_language_pat.finditer(s):
-        language = m.group(1)
-        if g.isValidLanguage(language):
-            return language
-    return ''
-
-
 # @+node:ekr.20090214075058.6: *3* g.findLanguageDirectives (must be fast)
 def findLanguageDirectives(c: Cmdr, p: Position) -> str:
     """Return the language in effect at position p."""
@@ -2778,47 +2736,6 @@ def getLanguageAtPosition(c: Cmdr, p: Position) -> str:
     """
     g.deprecated()
     return c.getLanguage(p)
-
-
-# @+node:ekr.20031218072017.1386: *3* g.getOutputNewline
-def getOutputNewline(c: Cmdr | None = None, name: str = '') -> str:
-    """Convert the name of a line ending to the line ending itself.
-
-    Priority:
-    - Use name if name given
-    - Use c.config.output_newline if c given,
-    - Otherwise use g.app.config.output_newline.
-    """
-    if name:
-        s = name
-    elif c:
-        s = c.config.getString('output-newline')
-    else:
-        s = 'nl'  # Legacy value. Perhaps dubious.
-    if not s:
-        s = ''
-    s = s.lower()
-    if s in ("nl", "lf"):
-        s = '\n'
-    elif s == "cr":
-        s = '\r'
-    elif s == "platform":
-        s = os.linesep  # 12/2/03: emakital
-    elif s == "crlf":
-        s = "\r\n"
-    else:
-        s = '\n'  # Default for erroneous values.
-    assert isinstance(s, str), repr(s)
-    return s
-
-
-# @+node:ekr.20200810074755.1: *3* g.isValidLanguage
-def isValidLanguage(language: str) -> bool:
-    """True if the given language may be used as an external file."""
-    return bool(
-        language
-        and (language in g.app.language_delims_dict or language in g.app.delegate_language_dict)
-    )
 
 
 # @+node:ekr.20250403040834.1: *3* --- to be deprecated! Using directives list
@@ -3000,18 +2917,6 @@ def scanForAtSettings(p: Position) -> bool:
         if h.startswith("@settings"):
             return True
     return False
-
-
-# @+node:ekr.20031218072017.1382: *3* g.set_delims_from_language
-def set_delims_from_language(language: str) -> tuple[str, str, str]:
-    """Return a tuple (single,start,end) of comment delims."""
-    if val := g.app.language_delims_dict.get(language):
-        delim1, delim2, delim3 = g.set_delims_from_string(val)
-        if delim2 and not delim3:
-            return '', delim1, delim2
-        # 0,1 or 3 params.
-        return delim1, delim2, delim3
-    return '', '', ''  # Indicate that no change should be made
 
 
 # @+node:ekr.20031218072017.1384: *3* g.set_language
@@ -3318,10 +3223,7 @@ def readlineForceUnixNewline(f: IO, fileName: str = '') -> str:
 
 
 # @+node:ekr.20060328150113: *3* g.setGlobalOpenDir
-def setGlobalOpenDir(fileName: str) -> None:
-    if fileName:
-        g.app.globalOpenDir = g.os_path_dirname(fileName)
-        # g.es('current directory:',g.app.globalOpenDir)
+# g.es('current directory:',g.app.globalOpenDir)
 
 
 # @+node:ekr.20230113043029.1: *3* g.write_file_if_changed

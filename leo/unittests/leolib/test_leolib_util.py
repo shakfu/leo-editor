@@ -66,9 +66,10 @@ class TestLeolibUtil(unittest.TestCase):
 
         leoGlobals imports util, so anything util imported back would be a
         cycle -- and the point of the split is that the arrow points one way.
-        state is the single exception, and it earns it by importing nothing
-        itself: it exists precisely so that util can read Leo's mutable flags
-        without reaching for leoGlobals. A subprocess, because any other test
+        state is the exception, and it earns it by importing nothing but
+        language_data, which imports nothing at all: state exists precisely so
+        that util can read Leo's mutable flags and language tables without
+        reaching for leoGlobals. A subprocess, because any other test
         in this process has already imported half of Leo.
         """
         out = subprocess.run(
@@ -93,7 +94,7 @@ class TestLeolibUtil(unittest.TestCase):
         loaded = eval(out.stdout.strip())  # noqa: S307
         self.assertEqual(
             loaded,
-            ['leo.leolib.state', 'leo.leolib.util'],
+            ['leo.leolib.language_data', 'leo.leolib.state', 'leo.leolib.util'],
             f"util dragged in Leo modules: {loaded}",
         )
 

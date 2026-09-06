@@ -28,7 +28,7 @@ import importlib
 from typing import Any
 
 # The package's own modules. See __getattr__.
-_SUBMODULES = ('api', 'state', 'util')
+_SUBMODULES = ('api', 'language_data', 'state', 'util')
 
 __all__ = [
     'Outline',

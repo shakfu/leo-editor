@@ -3507,6 +3507,116 @@ def extractExecutableString(c: Outline | Cmdr, p: Position, s: str) -> str:
     return ''.join(result)
 
 
+# @+node:sa.20260909110000.1: ** util.Directives (moved later)
+# @+node:sa.20260909110000.2: *3* util.comment_delims_from_extension
+def comment_delims_from_extension(filename: str) -> tuple[str, str, str]:
+    """
+    Return the comment delims corresponding to the filename's extension.
+    """
+    if filename.startswith('.'):
+        root, ext = '', filename
+    else:
+        root, ext = os.path.splitext(filename)
+    if ext == '.tmp':
+        root, ext = os.path.splitext(root)
+    language = state.extension_dict.get(ext[1:], '')
+    if ext:
+        return set_delims_from_language(language)
+    trace(f"unknown extension: {ext!r}, filename: {filename!r}, root: {root!r}")
+    return '', '', ''
+
+
+# @+node:sa.20260909110000.3: *3* util.findAllValidLanguageDirectives
+def findAllValidLanguageDirectives(s: str) -> list:
+    """
+    Return list of all languages for which there is a valid @language
+    directive in s.
+    """
+    if not s.strip():
+        return []
+    languages = set()
+    for m in g_language_pat.finditer(s):
+        language = m.group(1)
+        if isValidLanguage(language):
+            languages.add(language)
+    return list(sorted(languages))
+
+
+# @+node:sa.20260909110000.4: *3* util.findFirstValidAtLanguageDirective
+def findFirstValidAtLanguageDirective(s: str) -> str:
+    """
+    Return the first language for which there is a valid @language
+    directive in s.
+    """
+    if not s.strip():
+        return ''
+    for m in g_language_pat.finditer(s):
+        language = m.group(1)
+        if isValidLanguage(language):
+            return language
+    return ''
+
+
+# @+node:sa.20260909110000.5: *3* util.getOutputNewline
+def getOutputNewline(c: Cmdr | None = None, name: str = '') -> str:
+    """Convert the name of a line ending to the line ending itself.
+
+    Priority:
+    - Use name if name given
+    - Use c.config.output_newline if c given,
+    - Otherwise 'nl'.
+    """
+    if name:
+        s = name
+    elif c:
+        s = c.config.getString('output-newline')
+    else:
+        s = 'nl'  # Legacy value. Perhaps dubious.
+    if not s:
+        s = ''
+    s = s.lower()
+    if s in ("nl", "lf"):
+        s = '\n'
+    elif s == "cr":
+        s = '\r'
+    elif s == "platform":
+        s = os.linesep  # 12/2/03: emakital
+    elif s == "crlf":
+        s = "\r\n"
+    else:
+        s = '\n'  # Default for erroneous values.
+    assert isinstance(s, str), repr(s)
+    return s
+
+
+# @+node:sa.20260909110000.6: *3* util.isValidLanguage
+def isValidLanguage(language: str) -> bool:
+    """True if the given language may be used as an external file."""
+    return bool(
+        language
+        and (language in state.language_delims_dict or language in state.delegate_language_dict)
+    )
+
+
+# @+node:sa.20260909110000.7: *3* util.set_delims_from_language
+def set_delims_from_language(language: str) -> tuple[str, str, str]:
+    """Return a tuple (single,start,end) of comment delims."""
+    if val := state.language_delims_dict.get(language):
+        delim1, delim2, delim3 = set_delims_from_string(val)
+        if delim2 and not delim3:
+            return '', delim1, delim2
+        # 0,1 or 3 params.
+        return delim1, delim2, delim3
+    return '', '', ''  # Indicate that no change should be made
+
+
+# @+node:sa.20260909110000.8: ** util.Files & Directories (moved later)
+# @+node:sa.20260909110000.9: *3* util.setGlobalOpenDir
+def setGlobalOpenDir(fileName: str) -> None:
+    if fileName:
+        state.global_open_dir = os_path_dirname(fileName)
+
+
 # @-others
 # @@language python
 # @@tabwidth -4

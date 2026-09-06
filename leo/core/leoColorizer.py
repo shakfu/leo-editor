@@ -25,6 +25,7 @@ except ImportError:
 
 # Leo imports...
 from leo.core import leoGlobals as g
+from leo.leolib import util
 from leo.core.leoColor import leo_color_database
 
 # Qt imports. May fail from the bridge.
@@ -3382,8 +3383,11 @@ class PygmentsColorizer(JEditColorizer):
         self.color_enabled = self.enabled
         self.getDefaultFormat: Callable
         self.old_v: VNode | None = None
-        # Monkey-patch g.isValidLanguage.
-        g.isValidLanguage = cast(Any, self.pygments_isValidLanguage)
+        # Monkey-patch isValidLanguage. Both names: the function lives in
+        # leo.leolib.util and leoGlobals re-exports it, so patching only
+        # g.isValidLanguage would leave util's own callers --
+        # findAllValidLanguageDirectives and its sibling -- on the original.
+        g.isValidLanguage = util.isValidLanguage = cast(Any, self.pygments_isValidLanguage)
         # Init common data...
         self.reloadSettings()
 

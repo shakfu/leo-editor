@@ -46,7 +46,7 @@ import os
 from typing import Any, TYPE_CHECKING
 
 from leo.core import leoGlobals as g
-from leo.core import leoLanguageData
+from leo.leolib import state
 from leo.core import leoNodes
 from leo.core.leoOutline import Outline
 
@@ -152,13 +152,13 @@ class _MinimalApp:
         self.syntax_error_files: list[str] = []
         # outline.getPath falls back to this for an outline with no file name.
         self.homeDir = os.path.expanduser('~')
-        # Comment delimiters and file extensions. The readers and writers of
-        # external files need these; leoLanguageData is where LeoApp gets them
-        # too, so there is one copy of the data.
-        self.extension_dict = dict(leoLanguageData.extension_dict)
-        self.language_delims_dict = dict(leoLanguageData.language_delims_dict)
-        self.language_extension_dict = dict(leoLanguageData.language_extension_dict)
-        self.extra_extension_dict = {'pod': 'perl', 'unknown_language': 'none', 'w': 'c'}
+        # Comment delimiters and file extensions. The same dicts LeoApp uses:
+        # leo.leolib.state holds them, and both apps point at them rather than
+        # copying, so there is one set of tables in the process.
+        self.extension_dict = state.extension_dict
+        self.language_delims_dict = state.language_delims_dict
+        self.language_extension_dict = state.language_extension_dict
+        self.extra_extension_dict = state.extra_extension_dict
         # VNode asks for these on every dirty bit. leoGlobals owns the
         # constants; LeoApp copies the same ones.
         self.atAutoNames = set(g.atAutoNames)

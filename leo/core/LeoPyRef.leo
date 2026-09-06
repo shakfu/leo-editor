@@ -129,12 +129,12 @@
 <v t="ekr.20031218072017.3206"><vh>@file leoImport.py</vh></v>
 <v t="ekr.20241022090855.1"><vh>@file leoJupytext.py</vh></v>
 <v t="ekr.20190515070742.1"><vh>@file leoMarkup.py</vh></v>
-<v t="sa.20260906150000.1"><vh>@file leoLanguageData.py</vh></v>
 <v t="sa.20260907120000.1"><vh>@file leoPluginRegistry.py</vh></v>
 <v t="ekr.20031218072017.3320"><vh>@file leoNodes.py</vh></v>
 <v t="sa.20260905130000.1"><vh>@file leoOutline.py</vh></v>
 <v t="sa.20260908130000.1"><vh>@file ../leolib/__init__.py</vh></v>
 <v t="sa.20260906100000.1"><vh>@file ../leolib/api.py</vh></v>
+<v t="sa.20260906150000.1"><vh>@file ../leolib/language_data.py</vh></v>
 <v t="sa.20260908160000.1"><vh>@file ../leolib/state.py</vh></v>
 <v t="sa.20260908140000.1"><vh>@file ../leolib/util.py</vh></v>
 <v t="sa.20260905210000.1"><vh>@file ../tui/__init__.py</vh></v>
