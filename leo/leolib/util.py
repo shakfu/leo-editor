@@ -3325,6 +3325,46 @@ def toEncodedString(s: bytes | str, encoding: str = '', reportErrors: bool = Fal
     raise ValueError(f"{tag}: {s=} {callers()=}")
 
 
+# @+node:ekr.20190505052756.1: *3* util.checkUnicode
+def checkUnicode(s: str, encoding: str = '') -> str:
+    """
+    Warn when converting bytes. Report *all* errors.
+
+    This method is meant to document defensive programming. We don't expect
+    these errors, but they might arise as the result of problems in
+    user-defined plugins or scripts.
+    """
+    tag = 'g.checkUnicode'
+    if not s and state.unitTesting:
+        return ''
+    if isinstance(s, str):
+        return s
+    if not isinstance(s, bytes):
+        error(f"{tag}: unexpected argument: {s!r}")
+        trace('callers:', callers())
+        return ''
+
+    # Report the unexpected conversion.
+    message = f"\n{tag}: expected unicode. got: {s!r}\n{callers()}"
+    es_print_unique_message(message)
+
+    # Convert to unicode, reporting all errors.
+    if not encoding:
+        encoding = 'utf-8'
+    try:
+        s = s.decode(encoding, 'strict')
+    except (UnicodeDecodeError, UnicodeError):  # noqa
+        # https://wiki.python.org/moin/UnicodeDecodeError
+        s = s.decode(encoding, 'replace')
+        trace(callers())
+        error(f"{tag}: unicode error. encoding: {encoding!r}, s:\n{s!r}")
+    except Exception:
+        trace(callers())
+        es_exception()
+        error(f"{tag}: unexpected error! encoding: {encoding!r}, s:\n{s!r}")
+    return s
+
+
 # @+node:sa.20260908180000.19: ** util.Logging & Printing (moved later)
 # @+node:sa.20260908180000.20: *3* util.tr
 tr = translateString
@@ -3367,6 +3407,28 @@ def deprecated() -> None:
     if print_unique_message(message):
         print(callers(6))
         print('')
+
+
+# @+node:sa.20260909190000.1: *3* util.is_text_wrapper
+def is_text_wrapper(w: Any) -> bool:
+    """
+    True if w behaves like one of Leo's text wrappers.
+
+    g.isTextWrapper asks g.app.gui, and both guis answer it with a class check:
+    StringTextWrapper for the null gui, QTextMixin for Qt. The model has no gui
+    to ask, and a front end is entitled to supply its own buffer -- a terminal
+    view's is a plain object -- so the question here is what w implements
+    rather than what it inherits from. A NullObject answers every attribute and
+    so passes, which is the case the Qt gui special-cases by hand.
+
+    Deliberately not named isTextWrapper: g.isTextWrapper still asks the gui,
+    and two names that mean almost the same thing are safer than one name that
+    means two things depending on which module you read it in.
+    """
+    return w is not None and all(
+        callable(getattr(w, name, None))
+        for name in ('getAllText', 'getInsertPoint', 'getSelectionRange')
+    )
 
 
 # @+node:sa.20260908180000.24: ** util.os_path_ Wrappers (moved later)
@@ -3771,10 +3833,9 @@ def _proxy_state(name: str) -> property:
 
 for _name in ('app', 'unitTesting', 'inScript', 'in_bridge', 'in_leo_server', 'in_vs_code'):
     setattr(_UtilModule, _name, _proxy_state(_name))
-    # Also in the module dict, where nothing reads it: unittest.mock asks
-    # whether an attribute is "local" before patching, and undoes a patch with
-    # delattr when the answer is no. See the same note in leoGlobals.
-    globals()[_name] = getattr(state, _name)
+    # The name must NOT also appear in this module's dict: on Python 3.14 that
+    # lets an attribute load specialize to a direct dict lookup and skip the
+    # property. See the same note in leoGlobals.
 
 sys.modules[__name__].__class__ = _UtilModule
 

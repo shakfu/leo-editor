@@ -54,6 +54,8 @@ StringIO = io.StringIO
 # keeps working unchanged. See that module's docstring, and TODO.md.
 from leo.leolib import state as leoLibState
 from leo.leolib.util import (  # noqa: F401
+    checkUnicode,
+    is_text_wrapper,
     composeScript,
     getScript,
     openWithFileName,
@@ -4162,46 +4164,6 @@ def bytesToStr(b: bytes, reportErrors: bool = False) -> str:
     raise ValueError(f"{tag}: {b=}\n{g.callers()=}")
 
 
-# @+node:ekr.20190505052756.1: *4* g.checkUnicode
-def checkUnicode(s: str, encoding: str = '') -> str:
-    """
-    Warn when converting bytes. Report *all* errors.
-
-    This method is meant to document defensive programming. We don't expect
-    these errors, but they might arise as the result of problems in
-    user-defined plugins or scripts.
-    """
-    tag = 'g.checkUnicode'
-    if not s and g.unitTesting:
-        return ''
-    if isinstance(s, str):
-        return s
-    if not isinstance(s, bytes):
-        g.error(f"{tag}: unexpected argument: {s!r}")
-        g.trace('callers:', g.callers())
-        return ''
-
-    # Report the unexpected conversion.
-    message = f"\n{tag}: expected unicode. got: {s!r}\n{g.callers()}"
-    g.es_print_unique_message(message)
-
-    # Convert to unicode, reporting all errors.
-    if not encoding:
-        encoding = 'utf-8'
-    try:
-        s = s.decode(encoding, 'strict')
-    except (UnicodeDecodeError, UnicodeError):  # noqa
-        # https://wiki.python.org/moin/UnicodeDecodeError
-        s = s.decode(encoding, 'replace')
-        g.trace(g.callers())
-        g.error(f"{tag}: unicode error. encoding: {encoding!r}, s:\n{s!r}")
-    except Exception:
-        g.trace(g.callers())
-        g.es_exception()
-        g.error(f"{tag}: unexpected error! encoding: {encoding!r}, s:\n{s!r}")
-    return s
-
-
 # @+node:ekr.20240325175449.1: *4* g.strToBytes
 def strToBytes(s: str, reportErrors: bool = False) -> bytes:
     """Convert unicode string to an encoded string."""
@@ -5751,13 +5713,13 @@ def _proxy_flag(name: str) -> property:
 
 for _flag in ('app', 'unitTesting', 'inScript', 'in_bridge', 'in_leo_server', 'in_vs_code'):
     setattr(_LeoGlobalsModule, _flag, _proxy_flag(_flag))
-    # Also leave the name in this module's dict, where it is never read: the
-    # property is a data descriptor, so it wins for both get and set. It is
-    # there for tools that ask whether the attribute is 'local' before they
-    # patch it. unittest.mock does, and when the answer is no it *deletes* the
-    # attribute to undo a patch -- which a property has no deleter for, and
-    # which would be the wrong thing anyway.
-    globals()[_flag] = getattr(leoLibState, _flag)
+    # The name must NOT also appear in this module's dict. Python 3.14
+    # specializes an attribute load on a module to a direct dict lookup, and
+    # the guard admits ModuleType subclasses, so a second read of g.app would
+    # return the dict entry and skip the property. With no entry the load
+    # cannot specialize and the property is always consulted.
+    # Consequence: mock.patch.object(g, <flag>) does not work, because mock
+    # undoes a non-local attribute with delattr. Save and restore instead.
 
 sys.modules[__name__].__class__ = _LeoGlobalsModule
 

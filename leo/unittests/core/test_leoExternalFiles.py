@@ -49,10 +49,17 @@ class TestExternalFiles(LeoUnitTest):
             'ext': None,
         }
         fn = '/tmp/example file.md'
-        with mock.patch.object(g, 'unitTesting', False):
+        # g.unitTesting is a property over leo.leolib.state, and mock.patch
+        # undoes a non-local attribute with delattr, which a property has no
+        # deleter for. Save and restore it directly.
+        old_unitTesting = g.unitTesting
+        g.unitTesting = False
+        try:
             with mock.patch.object(leoExternalFiles.os, 'name', 'posix'):
                 with mock.patch.object(leoExternalFiles.subprocess, 'Popen', fake_popen):
                     command = efc.open_file_in_external_editor(c, d, fn)
+        finally:
+            g.unitTesting = old_unitTesting
         expected = [
             '/usr/bin/editor',
             '/tmp/example file.md',

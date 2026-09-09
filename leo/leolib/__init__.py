@@ -39,6 +39,7 @@ __all__ = [
     'save',
     'tangle',
     'to_xml',
+    'undoer',
     'write_external_files',
 ]
 

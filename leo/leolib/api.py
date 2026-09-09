@@ -43,7 +43,7 @@ Usage:
 # @+node:sa.20260906100000.2: ** << leolib imports >>
 from __future__ import annotations
 import os
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 # util, not leoGlobals: this module is part of Leo's model, and the model
 # no longer needs anything leoGlobals owns. util offers every name it uses,
@@ -66,6 +66,7 @@ __all__ = [
     'read_external_files',
     'save',
     'to_xml',
+    'undoer',
 ]
 
 
@@ -424,6 +425,28 @@ def tangle(outline: Outline, p: Position) -> str:
     at = outline.atFileCommands
     sentinels = bool(p.isAtFileNode() or p.isAtThinFileNode() or p.isAtShadowFileNode())
     return at.atFileToString(p, sentinels=sentinels)
+
+
+# @+node:sa.20260909200000.1: ** leolib.undoer
+def undoer(outline: Outline) -> Any:
+    """
+    This outline's undo stack, created on first use.
+
+    One outline, one history: every view of an outline shares it, so it hangs
+    on the document rather than on whichever view asked. leoUndo is a model
+    module -- it imports util, not leoGlobals -- but it is not imported until
+    somebody wants undo, because a script that only reads a .leo file should
+    not pay for it.
+
+    Undo of a *body* change reads the caret and selection from the acting
+    view's `frame.body.wrapper`; a view with no buffer still gets working
+    structural undo. See leo/leotui/view.py.
+    """
+    if outline.undoer is None:
+        from leo.core import leoUndo
+
+        outline.undoer = leoUndo.Undoer(cast('Any', outline.c or outline))
+    return outline.undoer
 
 
 # @+node:sa.20260906100000.8: ** leolib.to_xml

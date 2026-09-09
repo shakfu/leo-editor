@@ -10,7 +10,7 @@ file is only the list of what is left.
 leolib                the model and its machinery. No view, ever.
    ^
    +-- leogui         the Qt front end       (today: leo/plugins/qt_*)
-   +-- leotui         the terminal front end (today: leo/tui)
+   +-- leotui         the terminal front end (leo/leotui, on leolib)
    +-- leoweb         the web front end      (today: leoserver, as a seed)
 ```
 
@@ -19,8 +19,10 @@ files, including every `@<file>` directive, and **the model no longer imports
 `leoGlobals` or any view module.** Opening `LeoPyRef.leo` and reading all 376 of
 its external files imports 13 `leo.*` modules; the same file through `leoBridge`
 imports 105. The model still lives in `leo/core`; see section 3. None of the
-three front ends uses `leolib` yet. 942 tests pass headless and under real
-PyQt6; `ruff`, `ty` and `check_leo_sync` are clean.
+three front ends uses `leolib` yet, but a fourth does: `leo/leotui` opens,
+folds, edits and saves a `.leo` file, and tangles its external files, through
+`leolib` alone, undo included. 949 tests pass headless and under real PyQt6;
+`ruff`, `ty` and `check_leo_sync` are clean.
 
 ---
 
@@ -31,15 +33,15 @@ dependency work is finished and enforced by tests; what remains is where the
 files live.
 
 `leo/leolib/` holds `util.py`, `state.py`, `language_data.py`, `api.py` and an
-empty `__init__.py`. The eight model modules — `leoNodes`, `leoOutline`,
+empty `__init__.py`. The nine model modules — `leoNodes`, `leoOutline`,
 `leoFileCommands`, `leoAtFile`, `leoShadow`, `leoImport`, `signal_manager`,
-`leoPluginRegistry` — still sit in `leo/core/`, even though nothing about their
+`leoPluginRegistry` and `leoUndo` — still sit in `leo/core/`, even though nothing about their
 imports requires it any more. Moving them is `git mv` plus four mechanical
 follow-ups (below). The decision is what the old import paths should do:
 
 | option | cost |
 |---|---|
-| **Leave re-export shims** at `leo/core/leoNodes.py` etc. | Eight extra one-line files, two names per module. Nothing in Leo or in any plugin breaks. |
+| **Leave re-export shims** at `leo/core/leoNodes.py` etc. | Nine extra one-line files, two names per module. Nothing in Leo or in any plugin breaks. |
 | **Move and update all 110 in-tree files** | Cleanest result. Every out-of-tree plugin doing `from leo.core.leoNodes import Position` breaks on upgrade — that is most of them. |
 | **Don't move them** | Nothing breaks and nothing improves. The boundary is already correct and enforced; the location is cosmetic. Spend the effort on section 2 instead. |
 
@@ -99,10 +101,123 @@ already confirmed working in the GUI.
 
 Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 
-- [ ] **`leo/tui` → `leo/leotui`, and point it at `leolib`.** It currently boots
-      through `leoBridge` and the full commander stack. Smallest of the three
-      front ends, and the first real test of the boundary.
-      `leo/tui` also cannot create a new outline — only open an existing file.
+- [x] **`leo/leotui`: a terminal front end on `leolib`.** Done, as a second
+      package beside `leo/tui` rather than a rename, so the two can be measured
+      against each other. Opening `LeoPyRef.leo` and reading all 376 external
+      files imports **17** `leo.*` modules through `leotui` and **108** through
+      `leo/tui`'s `leoBridge`; both build the same 11,579 nodes.
+      `test_leotui.py` asserts the count stays under 40 and that no
+      `leoGlobals`, `leoCommands`, `leoBridge` or view module is imported at
+      all. Editing, structural edits, per-view folds and tangling to disk are
+      each covered.
+
+      **What a front end has to supply is `leo/leotui/view.py`**: 10 members,
+      119 lines. It holds a `ViewState`, a current position, a text buffer and
+      two redraw flags -- and nothing else, because it no longer has to
+      impersonate a window to be allowed to save.
+
+      That is the result of the fix below, not of the first draft. `TuiView`
+      started at ~20 members and 234 lines, most of them settings, a document
+      cache and fake window geometry it invented to satisfy the model.
+- [x] **`Outline` now asks what a view can answer, not whether one exists.**
+      Every forward was guarded by `if self.c is None`, which made "a view is
+      attached" mean "a Qt window is attached". `Outline.ask_view(name, default)`
+      replaces that: a view supplies what it has, and the document keeps the
+      headless answer -- already written and already correct -- for the rest. A
+      view that answers nothing is now indistinguishable from no view.
+
+      Converted: `config`, `target_language`, `tab_width`, `page_width`, `db`,
+      `frame`, `importCommands`, `setBodyString`, `setChanged`,
+      `shouldBeExpanded`, `alert`, `redraw`, `bodyWantsFocusNow`, `endEditing`,
+      `init_error_dialogs`, `raise_error_dialogs`, `selectPosition`. Real Leo is
+      unaffected: a commander answers everything, so `getattr` finds it.
+
+      Three of these were live crashes, not tidiness. `alert`,
+      `init_error_dialogs` and `raise_error_dialogs` were `AttributeError` for
+      any view that is not a commander, and `leoAtFile.writeAll` calls the last
+      two on every write.
+
+      Four sites outside `Outline` had the same shape:
+
+      - `fc.putGlobals` wanted `c.frame.compute_ratio()` and `get_window_info()`
+        on every save. It now asks the view for a frame and keeps the geometry
+        the file was read with when there is none.
+      - `fc.putStyleSheetLine` read `c.config` whenever a view existed.
+      - `at.initAllIvars` passed the view to `g.getOutputNewline(c=c)`, which
+        reads `c.config`. Its two sibling call sites already asked the document;
+        this one had been missed.
+      - `at.promptForDangerousWrite` refused when `c is None`, then called
+        `g.app.gui.runAskYesNoCancelDialog` unconditionally. A view with no gui
+        now gets the same refusal as no view, rather than a crash.
+
+      `test_a_view_that_answers_little_still_works` is the guard: a view with
+      ten members, no settings, no cache and no dialogs must still save and
+      tangle. Reverting either the `Outline.config` change or the
+      `promptForDangerousWrite` change fails four tests.
+
+      **Still binary, deliberately:** `outline.p` and `createNodeHierarchy`
+      have no headless answer, so they still require a view that provides them.
+      See section 4.
+
+      While fixing this: nine `at.write*` helpers referenced `fileName` in their
+      `except` clause before assigning it, so any exception before
+      `initWriteIvars` surfaced as `UnboundLocalError` instead of the real
+      error. That is what hid `getOutputNewline` above.
+- [x] **`leoUndo` is a model module: undo works with no commander and no gui.**
+      It was the last thing `leotui` could not do. `leoUndo` now says
+      `from leo.leolib import util as g`; importing it pulls 8 modules and
+      `leoGlobals` is not among them. `leolib.undoer(outline)` creates the
+      stack on first use -- one outline, one history, shared by every view --
+      and imports `leoUndo` only then, so a script that just reads a `.leo`
+      file still opens `LeoPyRef.leo` in 10 modules. Through `leotui` the count
+      goes 17 to 18.
+
+      Two names had to move with it. `checkUnicode` was view-free and belongs
+      in `util`; `leoGlobals` re-exports it, so `g.checkUnicode` is unchanged
+      and `test_leoGlobals_reexports_every_name` enforces that it is the same
+      object. `isTextWrapper` could not move: it asks `g.app.gui`, and
+      `_MinimalApp.gui` is `None` on purpose. `util.is_text_wrapper` is a
+      duck-type test instead -- both gui implementations are class checks, and
+      a `NullObject` passes it exactly as the Qt gui special-cases by hand. It
+      is deliberately not called `isTextWrapper`: `g.isTextWrapper` still asks
+      the gui for the ten view modules that call it, and two names that mean
+      almost the same thing beat one name that means two things.
+
+      What the undoer used a host for, and what it does now:
+
+      | was | now |
+      |---|---|
+      | `c.config` for granularity and stack size | `outline.config`: settings are the document's |
+      | `c.frame.menu` relabelling Edit/Undo | `u.menu_bar()`; the labels are u's own state and are tracked with or without a menu |
+      | `c.frame.body.wrapper` | `u.body_wrapper()`; a view with no buffer still gets structural undo |
+      | `g.app.gui.isTextWrapper` | `g.is_text_wrapper` |
+      | `c.recolor`, `c.bodyWantsFocus`, `c.editHeadline` | still the view's job, and a terminal's are no-ops |
+      | `c.checkOutline`, `c.chapterController`, `c.deleteOutline` | `u.ask_view(...)`, with a model fallback where undo needs one |
+      | `c.all_unique_positions`, `c.fileCommands`, `c.nodeIndices`, `c.hiddenRootNode`, `c.redraw`, `c.setChanged`, ... (18 lines) | `self.outline`: they were always document operations that happened to live on Commands |
+
+      `c.set/clearMarked` was the subtle one: the bit is model state and the
+      commander only adds a hook, so the bit is set directly when no view
+      offers the hook. Undoing a mark used to be an `AttributeError`.
+
+      `test_undo_and_redo` covers undo and redo of a headline, a body, an
+      insert, a delete and a move through `leotui`, and asserts that none of it
+      imports `leoGlobals`, `leoCommands` or a gui.
+
+      **Not covered:** undo of the commands `leotui` cannot run -- hoist,
+      chapters, clone/copy/delete-marked, sort, paste. Their helpers still ask
+      the view and now decline rather than crash, but nothing exercises them
+      without a commander because nothing can create those beads without one.
+- [ ] **`leo/tui` is now redundant.** Deleting it removes the duplicate of
+      `screen.py`. Left in place so the comparison above can be re-run.
+- [ ] **Commands stay out of reach, as recorded in section 4.**
+      `commanderOutlineCommands` imports `leoGlobals` and calls
+      `g.app.gui.replaceClipboardWith`; `c.doCommandByName` calls
+      `g.app.gui.create_key_event` and `c.frame.updateStatusLine`. `leotui`
+      therefore builds insert, delete and the four moves from the `Position`
+      primitives in `leoNodes`, which are model. They move a node among its
+      *siblings*; Leo's `move-outline-up` moves it in visible order and honours
+      hoists, and that difference is deliberate, not an approximation to finish
+      later.
 - [ ] **`leo/leogui`.** The Qt front end is spread across `leo/plugins/qt_*` and
       the Qt halves of `leoFrame`. Renaming is cosmetic; the substance is making
       it depend on `leolib` rather than on `leo.core` wholesale.
@@ -170,7 +285,7 @@ which is what `leolib` already did in effect.
   needs its levels shifted; and a reused gnx makes two files stop
   round-tripping. `check_leo_sync` caught all of it, and nothing else did.
 
-**Still to do:** move the eight model modules into `leo/leolib/`. Nothing
+**Still to do:** move the nine model modules into `leo/leolib/`. Nothing
 blocks it — the imports all point the right way — but it needs a decision about
 the old paths first. See **Pick up here** at the top of this file.
 

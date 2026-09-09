@@ -171,6 +171,10 @@ class ViewState:
 
 
 # @+node:sa.20260905130000.3: ** class Outline
+# Distinguishes "the view answered None" from "the view has no answer".
+_unset: Any = object()
+
+
 class Outline:
     """One open Leo document. Knows nothing about how it is displayed."""
 
@@ -429,6 +433,25 @@ class Outline:
             return self._acting_c
         return self.views[0] if self.views else cast('Cmdr', None)
 
+    def ask_view(self, name: str, default: Any = None) -> Any:
+        """
+        What the acting view can answer for `name`, else `default`.
+
+        `if self.c is None` asks whether anything is displaying this outline,
+        and every call site below wanted a different question. A view is not
+        necessarily a *window*: a terminal view answers `p` and `view_state`
+        but has no geometry, no settings file and no dialogs. Asking what the
+        view implements lets it supply only what it has and leaves the headless
+        answer -- already written, already correct -- for the rest. A view that
+        answers nothing is then indistinguishable from no view, which is the
+        property that makes a second front end cheap to write.
+        """
+        c = self.c
+        if c is None:
+            return default
+        value = getattr(c, name, _unset)
+        return default if value is _unset else value
+
     def acting_view(self, c: Cmdr) -> Any:
         """
         A context manager naming the view whose command is running.
@@ -543,9 +566,8 @@ class Outline:
         with no view at all still needs somewhere to put these.
         """
         primary = self.views[0] if self.views else None
-        if primary is None:
-            return self._viewless_db
-        return primary.db
+        cache = getattr(primary, 'db', None) if primary is not None else None
+        return self._viewless_db if cache is None else cache
 
     # @+node:sa.20260906120000.1: *3* outline: paths
     # Where a node's external file lives is a fact about the *document*: it
@@ -921,8 +943,9 @@ class Outline:
         leolib.read_external_files that may still fail for that reason; the
         failure is per node and leaves the node as the .leo file described it.
         """
-        if self.c is not None:
-            return self.c.importCommands
+        commands = self.ask_view('importCommands')
+        if commands is not None:
+            return commands
         if self._importCommands is None:
             from leo.core import leoImport
 
@@ -948,10 +971,11 @@ class Outline:
         its own body_changed event, so nothing else would. With no view at all
         the model half is the whole job.
         """
-        if self.c is not None:
-            self.c.setBodyString(p, s)
+        setter = self.ask_view('setBodyString')
+        if setter is None:
+            self.set_body_in_model(p, s)
             return
-        self.set_body_in_model(p, s)
+        setter(p, s)
 
     def set_body_in_model(self, p: Position, s: str) -> None:
         """
@@ -975,9 +999,15 @@ class Outline:
     # @+node:sa.20260905130000.7: *3* outline: forwarded to the primary view
     # Everything below still lives on the commander. Each one is a call site
     # that stages 4-6 of LEO_REFACTOR.md move to the document or to the views;
-    # until then it resolves against the primary view, which is what the code
-    # did before the Outline existed. This list *is* the remaining coupling:
-    # it should only ever get shorter.
+    # until then it asks the acting view, via self.ask_view, and falls back to
+    # the headless answer when the view has none. This list *is* the remaining
+    # coupling: it should only ever get shorter.
+    #
+    # Each forward is optional for a reason. These were guarded by
+    # `if self.c is None`, which made the model treat "a view is attached" as
+    # "a Qt window is attached": a terminal view had to grow settings, a cache
+    # and window geometry it does not have in order to be allowed to save.
+    # What a view cannot answer, the document answers for itself.
 
     # Model operations that happen to live on Commands (harmless to forward:
     # they read the shared VNode tree and give the same answer for any view).
@@ -995,32 +1025,30 @@ class Outline:
 
     @property
     def config(self) -> Any:
-        """This document's settings, or Leo's defaults when it has no view."""
-        if self.c is not None:
-            return self.c.config
+        """This document's settings: the view's, or Leo's defaults."""
+        settings = self.ask_view('config')
+        if settings is not None:
+            return settings
         if self._default_config is None:
             self._default_config = DefaultConfig()
         return self._default_config
 
     @property
     def target_language(self) -> str:
-        if self.c is None:
-            return self.config.getString('target-language') or 'python'
-        return self.c.target_language
+        language = self.ask_view('target_language')
+        return language or self.config.getString('target-language') or 'python'
 
     @property
     def tab_width(self) -> int:
         """The document's default tab width, from its settings."""
-        if self.c is None:
-            return self.config.getInt('tab-width') or -4
-        return self.c.tab_width
+        width = self.ask_view('tab_width')
+        return width if width is not None else (self.config.getInt('tab-width') or -4)
 
     @property
     def page_width(self) -> int:
         """The document's default page width, from its settings."""
-        if self.c is None:
-            return self.config.getInt('page-width') or 132
-        return self.c.page_width
+        width = self.ask_view('page_width')
+        return width if width is not None else (self.config.getInt('page-width') or 132)
 
     # View operations. Stage 5 gives each view its own expansion state; stage 6
     # makes the model, not the widget, authoritative for body text. Until then
@@ -1028,38 +1056,40 @@ class Outline:
 
     @property
     def frame(self) -> Any:
-        """The acting view's frame, or None when this outline has no view."""
-        return self.c.frame if self.c is not None else None
+        """The acting view's frame, or None when it has none."""
+        return self.ask_view('frame')
 
     @property
     def p(self) -> Position:
         return self.c.p
 
     def shouldBeExpanded(self, p: Position) -> bool:
-        return self.c.shouldBeExpanded(p)
+        """A view that does not track folds shows everything collapsed."""
+        asked = self.ask_view('shouldBeExpanded')
+        return bool(asked(p)) if asked else False
 
     def setChanged(self, *, force: bool = False) -> None:
         """Mark the document changed, and the window title with it."""
-        if self.c is None:
+        setter = self.ask_view('setChanged')
+        if setter is None:
             self.changed = True  # No window whose title could say so.
             return
-        self.c.setChanged(force=force)
+        setter(force=force)
 
     def alert(self, message: str) -> None:
-        if self.c is None:
+        show = self.ask_view('alert')
+        if show is None:
             g.es_print(message)  # No window to raise a dialog in.
             return
-        self.c.alert(message)
+        show(message)
 
     def redraw(self, p: Position | None = None) -> None:
-        if self.c is None:
-            return  # Nothing is drawn, so nothing to redraw.
-        self.c.redraw(p)
+        if draw := self.ask_view('redraw'):
+            draw(p)  # Else nothing is drawn, so there is nothing to redraw.
 
     def bodyWantsFocusNow(self) -> None:
-        if self.c is None:
-            return  # No widget can take focus.
-        self.c.bodyWantsFocusNow()
+        if focus := self.ask_view('bodyWantsFocusNow'):
+            focus()  # Else no widget can take focus.
 
     # These are things a *window* does. The file machinery calls them around
     # every read and write, so on an outline with no window they are no-ops
@@ -1067,25 +1097,22 @@ class Outline:
     # dialog to raise, and no selection to move.
 
     def endEditing(self) -> None:
-        if self.c is None:
-            return
-        self.c.endEditing()
+        if end := self.ask_view('endEditing'):
+            end()
 
     def init_error_dialogs(self) -> None:
         self.ignored_at_file_nodes = []
         self.orphan_at_file_nodes = []
-        if self.c is not None:
-            self.c.init_error_dialogs()
+        if init := self.ask_view('init_error_dialogs'):
+            init()
 
     def raise_error_dialogs(self, kind: str = 'read') -> None:
-        if self.c is None:
-            return
-        self.c.raise_error_dialogs(kind)
+        if raise_dialogs := self.ask_view('raise_error_dialogs'):
+            raise_dialogs(kind)
 
     def selectPosition(self, p: Position) -> None:
-        if self.c is None:
-            return
-        self.c.selectPosition(p)
+        if select := self.ask_view('selectPosition'):
+            select(p)
 
     # @-others
 

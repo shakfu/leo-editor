@@ -49,8 +49,13 @@
 from __future__ import annotations
 from collections.abc import Callable
 import weakref
-from typing import TYPE_CHECKING
-from leo.core import leoGlobals as g
+from typing import Any, TYPE_CHECKING
+
+# util, not leoGlobals: the undo stack is document state, and the four
+# things it needed a host for -- settings, the Edit menu's labels, the
+# body buffer and the gui's text-wrapper test -- are now asked of the
+# view, which may decline. See TODO.md section 2.
+from leo.leolib import util as g
 from leo.core.leoFileCommands import FastRead
 from leo.core.leoNodes import Position, VNode
 
@@ -83,7 +88,7 @@ class Undoer:
         self.interleaved_groups = 0  # Counted by u.check_group_origin.
         self.p: Position | None = None  # The position/node being operated upon for undo and redo.
         self.granularity = None  # Set in reloadSettings.
-        self.max_undo_stack_size = c.config.getInt('max-undo-stack-size') or 0
+        self.max_undo_stack_size = c.outline.config.getInt('max-undo-stack-size') or 0
         # State ivars...
         self.beads = []  # List of undo nodes.
         self.bead = -1  # Index of the present bead: -1:len(beads)
@@ -158,6 +163,33 @@ class Undoer:
         """
         return self.outline.c
 
+    def ask_view(self, name: str) -> Any:
+        """
+        The acting view's implementation of `name`, or None.
+
+        The mirror of Outline.ask_view, for what only a view can do. Undo has
+        to run for any view, and a terminal has no colourizer and no menus.
+        """
+        return getattr(self.c, name, None)
+
+    def menu_bar(self) -> Any:
+        """The acting view's menu bar, or None when it has no menus."""
+        frame = getattr(self.c, 'frame', None)
+        return getattr(frame, 'menu', None)
+
+    def body_wrapper(self) -> Any:
+        """
+        The acting view's body buffer, or None when it has none.
+
+        Undo reads the caret, the selection and the scroll position from it,
+        and afterChangeBody's docstring makes that the caller's contract. A
+        view is entitled to a buffer -- behind a null frame it is a plain
+        StringTextWrapper -- so this is a view's job, not a coupling to remove.
+        """
+        frame = getattr(self.c, 'frame', None)
+        body = getattr(frame, 'body', None)
+        return getattr(body, 'wrapper', None)
+
     def view_ref(self) -> Callable:
         """A weak reference to the acting view, or None."""
         c = self.c
@@ -192,8 +224,7 @@ class Undoer:
     # @+node:ekr.20191213085126.1: *4* u.reloadSettings
     def reloadSettings(self) -> None:
         """Undoer.reloadSettings."""
-        c = self.c
-        self.granularity = c.config.getString('undo-granularity')
+        self.granularity = self.outline.config.getString('undo-granularity')
         if self.granularity:
             self.granularity = self.granularity.lower()
         if self.granularity not in ('node', 'line', 'word', 'char'):
@@ -315,47 +346,51 @@ class Undoer:
 
     def setRedoType(self, theType: str) -> None:
         u = self
-        frame = u.c.frame
         if not isinstance(theType, str):  # pragma: no cover
             g.trace(f"oops: expected string for command, got {theType!r}")
             g.trace(g.callers())
             theType = '<unknown>'
-        menu = frame.menu.getMenu("Edit")
         name = u.redoMenuName(theType)
-        if name != u.redoMenuLabel:
-            # Update menu using old name.
-            realLabel = frame.menu.getRealMenuName(name)
-            if realLabel == name:
-                underline = -1 if g.match(name, 0, "Can't") else 0
-            else:
-                underline = realLabel.find("&")
-            realLabel = realLabel.replace("&", "")
-            frame.menu.setMenuLabel(menu, u.realRedoMenuLabel, realLabel, underline=underline)
-            u.redoMenuLabel = name
-            u.realRedoMenuLabel = realLabel
+        if name == u.redoMenuLabel:
+            return
+        # The labels are u's own state and are tracked whether or not anything
+        # displays them; only the relabelling needs a menu bar.
+        menu_bar = u.menu_bar()
+        realLabel = menu_bar.getRealMenuName(name) if menu_bar else name
+        if realLabel == name:
+            underline = -1 if g.match(name, 0, "Can't") else 0
+        else:
+            underline = realLabel.find("&")
+        realLabel = realLabel.replace("&", "")
+        if menu_bar:
+            menu = menu_bar.getMenu("Edit")
+            menu_bar.setMenuLabel(menu, u.realRedoMenuLabel, realLabel, underline=underline)
+        u.redoMenuLabel = name
+        u.realRedoMenuLabel = realLabel
 
     # @+node:ekr.20091221145433.6381: *4* u.setUndoType
     def setUndoType(self, theType: str) -> None:
         u = self
-        frame = u.c.frame
         if not isinstance(theType, str):
             g.trace(f"oops: expected string for command, got {repr(theType)}")
             g.trace(g.callers())
             theType = '<unknown>'
-        menu = frame.menu.getMenu("Edit")
         name = u.undoMenuName(theType)
-        if name != u.undoMenuLabel:
-            # Update menu using old name.
-            realLabel = frame.menu.getRealMenuName(name)
-            if realLabel == name:
-                underline = -1 if g.match(name, 0, "Can't") else 0
-            else:
-                underline = realLabel.find("&")
-            realLabel = realLabel.replace("&", "")
-            frame.menu.setMenuLabel(menu, u.realUndoMenuLabel, realLabel, underline=underline)
-            u.undoType = theType
-            u.undoMenuLabel = name
-            u.realUndoMenuLabel = realLabel
+        if name == u.undoMenuLabel:
+            return
+        menu_bar = u.menu_bar()
+        realLabel = menu_bar.getRealMenuName(name) if menu_bar else name
+        if realLabel == name:
+            underline = -1 if g.match(name, 0, "Can't") else 0
+        else:
+            underline = realLabel.find("&")
+        realLabel = realLabel.replace("&", "")
+        if menu_bar:
+            menu = menu_bar.getMenu("Edit")
+            menu_bar.setMenuLabel(menu, u.realUndoMenuLabel, realLabel, underline=underline)
+        u.undoType = theType
+        u.undoMenuLabel = name
+        u.realUndoMenuLabel = realLabel
 
     # @+node:ekr.20031218072017.3616: *4* u.setUndoTypes
     def setUndoTypes(self) -> None:
@@ -385,20 +420,24 @@ class Undoer:
     # @+node:ekr.20050410095424: *4* u.updateMarks
     def updateMarks(self, oldOrNew: str) -> None:
         """Update dirty and marked bits."""
-        c, u = self.c, self
+        u = self
         if oldOrNew not in ('new', 'old'):  # pragma: no cover
             g.trace("can't happen")
             return
         isOld = oldOrNew == 'old'
         marked = u.oldMarked if isOld else u.newMarked
-        # Note: c.set/clearMarked call a hook.
-        if marked:
-            c.setMarked(u.p)
+        # The bit is model state; c.set/clearMarked add a hook on top of it,
+        # so prefer the view when it has one and set the bit directly when not.
+        name = 'setMarked' if marked else 'clearMarked'
+        if setter := u.ask_view(name):
+            setter(u.p)
+        elif marked:
+            u.p.v.setMarked()
         else:
-            c.clearMarked(u.p)
+            u.p.v.clearMarked()
         # Undo/redo always set changed/dirty bits because the file may have been saved.
         u.p.setDirty()
-        u.c.setChanged()
+        u.outline.setChanged()
 
     # @+node:ekr.20031218072017.3608: *3* u.Externally visible entries
     # @+node:ekr.20050318085432.4: *4* u.afterX...
@@ -534,7 +573,6 @@ class Undoer:
     def afterChangeMultiHeadline(self, command: str, bunch: g.Bunch) -> None:
         """Create an undo node using d created by beforeChangeMultiHeadline."""
         u = self
-        c = self.c
         if u.redoing or u.undoing:
             return  # pragma: no cover
         # Set the type & helpers.
@@ -544,7 +582,7 @@ class Undoer:
         bunch.redoHelper = u.redoChangeMultiHeadline
         oldHeadlines = bunch.headlines
         newHeadlines = {}
-        for p in c.all_unique_positions():
+        for p in self.outline.all_unique_positions():
             if p.h != oldHeadlines[p.gnx][0]:
                 newHeadlines[p.gnx] = (oldHeadlines[p.gnx][0], p.h)
         # Filtered down dict containing only the changed ones.
@@ -564,7 +602,7 @@ class Undoer:
         bunch.undoType = command
         bunch.undoHelper = u.undoChangeTree
         bunch.redoHelper = u.redoChangeTree
-        bunch.newPastedTree = c.fileCommands.outline_to_clipboard_string(c.p)
+        bunch.newPastedTree = self.outline.fileCommands.outline_to_clipboard_string(c.p)
         bunch.newIns = w.getInsertPoint()
         bunch.newSel = w.getSelectionRange()
         bunch.newMarked = p.isMarked()
@@ -844,10 +882,10 @@ class Undoer:
         Return data that gets passed to afterChangeMultiHeadline.
         p is used to select position after undo/redo multiple headline changes is done
         """
-        c, u = self.c, self
+        u = self
         bunch = u.createCommonBunch(p)
         headlines = {}
-        for p in c.all_unique_positions():
+        for p in self.outline.all_unique_positions():
             headlines[p.gnx] = (p.h, None)
         # contains all, but will get reduced by afterChangeMultiHeadline
         bunch.headlines = headlines
@@ -874,7 +912,7 @@ class Undoer:
         w = self.c.frame.body.wrapper
         bunch = self.createCommonBunch(p)  # Sets u.oldMarked, u.oldSel, u.p
         bunch.kind = 'beforeChangeTree'
-        bunch.oldPastedTree = c.fileCommands.outline_to_clipboard_string(c.p)
+        bunch.oldPastedTree = self.outline.fileCommands.outline_to_clipboard_string(c.p)
         bunch.oldBody = p.b
         bunch.oldHead = p.h
         bunch.oldIns = w.getInsertPoint()
@@ -1312,10 +1350,10 @@ class Undoer:
     # @+node:ekr.20031218072017.3611: *4* u.enableMenuItems
     def enableMenuItems(self) -> None:
         u = self
-        frame = u.c.frame
-        if menu := frame.menu.getMenu("Edit"):
-            frame.menu.enableMenu(menu, u.redoMenuLabel, u.canRedo())
-            frame.menu.enableMenu(menu, u.undoMenuLabel, u.canUndo())
+        menu_bar = u.menu_bar()
+        if menu_bar and (menu := menu_bar.getMenu("Edit")):
+            menu_bar.enableMenu(menu, u.redoMenuLabel, u.canRedo())
+            menu_bar.enableMenu(menu, u.undoMenuLabel, u.canUndo())
 
     # @+node:ekr.20110519074734.6094: *4* u.onSelect & helpers
     def onSelect(self, old_p: Position, p: Position) -> None:
@@ -1355,7 +1393,7 @@ class Undoer:
         This is ugly, ad-hoc code, but should be done uniformly.
         """
         c = self.c
-        if g.isTextWrapper(w):
+        if g.is_text_wrapper(w):
             # An important, ever-present unit test.
             if p == c.p:
                 all = w.getAllText()
@@ -1382,18 +1420,23 @@ class Undoer:
             p.v.selectionStart, p.v.selectionLength = (0, 0)
         if not p.isDirty():
             p.setDirty()
-        if not c.isChanged():
-            c.setChanged()
+        if not self.outline.changed:
+            self.outline.setChanged()
 
         # Update icons.
         val = p.computeIcon()
         if not hasattr(p.v, "iconVal") or val != p.v.iconVal:
             p.v.iconVal = val
-        if p == c.p:
-            # Recolor the body.
-            c.frame.scanForTabWidth(p)  # Calls frame.setTabWidth()
-            c.recolor()
-            w.setFocus()
+        if c is None or p != c.p:
+            return
+        # Repaint the body. Each of these is a widget's job, and a view with no
+        # widgets -- a terminal -- simply has none of them to do.
+        if scan := getattr(self.outline.frame, 'scanForTabWidth', None):
+            scan(p)  # Calls frame.setTabWidth()
+        if recolor := getattr(c, 'recolor', None):
+            recolor()
+        if set_focus := getattr(w, 'setFocus', None):
+            set_focus()
 
     # @+node:ekr.20230722062645.1: *4* u.restoreFromCopiedTree
     def restoreFromCopiedTree(self, v: VNode, s: str) -> None:
@@ -1413,7 +1456,7 @@ class Undoer:
         """
         # @-<< docstring: restoreFromCopiedTree >>
         c, u = self.c, self
-        fc = c.fileCommands
+        fc = self.outline.fileCommands
         if not isinstance(v, VNode):
             g.trace("Can't happen: not a vnode: {v!r}")
             return
@@ -1439,8 +1482,8 @@ class Undoer:
         v = new_v
 
         # All pasted nodes should have unique gnx's.
-        ni = c.nodeIndices
-        for v in c.all_unique_nodes():
+        ni = self.outline.nodeIndices
+        for v in self.outline.all_unique_nodes():
             ni.check_gnx(c, v.fileIndex, v)
 
     # @+node:ekr.20031218072017.2030: *3* u.redo
@@ -1451,7 +1494,7 @@ class Undoer:
         if not c.p:
             return
         # End editing *before* getting state.
-        c.endEditing()
+        self.outline.endEditing()
         if not u.canRedo():
             return
         if not u.getBead(u.bead + 1):
@@ -1466,7 +1509,8 @@ class Undoer:
             g.trace(f"no redo helper for {u.kind} {u.undoType}")
 
         # Finish.
-        c.checkOutline()
+        if check := u.ask_view('checkOutline'):
+            check()
         # One outline, one undo history: a change replayed here may have deleted
         # the node another view is sitting on.
         u.outline.revalidate_views(acting_c=c)
@@ -1524,7 +1568,7 @@ class Undoer:
         # u.p alone, so the *other* renamed nodes kept stale headline widgets --
         # the same inversion, just less visible.
         for gnx, oldNewTuple in u.headlines.items():
-            v = c.fileCommands.gnxDict.get(gnx)
+            v = self.outline.fileCommands.gnxDict.get(gnx)
             v.initHeadString(oldNewTuple[1])
             if v.gnx == u.p.gnx:
                 u.p.setDirty()
@@ -1585,7 +1629,7 @@ class Undoer:
     # @+node:ekr.20050412083057: *4* u.redoCloneNode
     def redoCloneNode(self) -> None:
         c, u = self.c, self
-        if cc := c.chapterController:
+        if cc := u.ask_view('chapterController'):
             cc.selectChapterByName('main')
         if u.newBack:
             u.newP._linkAfter(u.newBack)
@@ -1635,7 +1679,7 @@ class Undoer:
         p = u.p.copy()  # u.p must exist now.
         newP = u.newP.copy() if u.newP else c.p.copy()  # #4373: u.newP might not exist now.
         if g.unitTesting:
-            assert c.positionExists(p), repr(p)
+            assert self.outline.positionExists(p), repr(p)
         u.groupCount += 1
         bunch = u.beads[u.bead + 1]
         count = 0
@@ -1657,7 +1701,7 @@ class Undoer:
         # Helpers set dirty bits.
         # Set c.p, independently of helpers.
         if g.unitTesting:
-            assert c.positionExists(newP), repr(newP)
+            assert self.outline.positionExists(newP), repr(newP)
         c.selectPosition(newP)
         # Set the selection, independently of helpers.
         if newSel:
@@ -1680,7 +1724,7 @@ class Undoer:
     # @+node:ekr.20050412084532: *4* u.redoInsertNode
     def redoInsertNode(self) -> None:
         c, u = self.c, self
-        if cc := c.chapterController:
+        if cc := u.ask_view('chapterController'):
             cc.selectChapterByName('main')
         if u.newBack:
             u.newP._linkAfter(u.newBack)
@@ -1711,7 +1755,7 @@ class Undoer:
     # @+node:ekr.20050411111847: *4* u.redoMove
     def redoMove(self) -> None:
         c, u = self.c, self
-        cc = c.chapterController
+        cc = u.ask_view('chapterController')
         v = u.p.v
         assert u.oldParent_v
         assert u.newParent_v
@@ -1759,7 +1803,7 @@ class Undoer:
         """Redo the parse-body command."""
         u = self
         c = u.c
-        ic = c.importCommands
+        ic = self.outline.importCommands
         p = u.p
         if c.p != p:
             c.selectPosition(p)
@@ -1843,7 +1887,7 @@ class Undoer:
             g.trace('no current position')
             return
         # End editing *before* getting state.
-        c.endEditing()
+        self.outline.endEditing()
         if u.per_node_undo:  # 2011/05/19
             u.setIvarsFromVnode(c.p)
         if not u.canUndo():
@@ -1862,7 +1906,8 @@ class Undoer:
             g.trace(f"no undo helper for {u.kind} {u.undoType}")
 
         # Finish.
-        c.checkOutline()
+        if check := u.ask_view('checkOutline'):
+            check()
         # One outline, one undo history: a change replayed here may have deleted
         # the node another view is sitting on.
         u.outline.revalidate_views(acting_c=c)
@@ -1926,7 +1971,7 @@ class Undoer:
         # u.p alone, so the *other* renamed nodes kept stale headline widgets --
         # the same inversion, just less visible.
         for gnx, oldNewTuple in u.headlines.items():
-            v = c.fileCommands.gnxDict.get(gnx)
+            v = self.outline.fileCommands.gnxDict.get(gnx)
             v.initHeadString(oldNewTuple[0])
             if v.gnx == u.p.gnx:
                 u.p.setDirty()
@@ -1959,7 +2004,7 @@ class Undoer:
     # @+node:ekr.20050412083057.1: *4* u.undoCloneNode
     def undoCloneNode(self) -> None:
         c, u = self.c, self
-        if cc := c.chapterController:
+        if cc := u.ask_view('chapterController'):
             cc.selectChapterByName('main')
         c.selectPosition(u.newP)
         c.deleteOutline()
@@ -1985,7 +2030,7 @@ class Undoer:
             if p.stack:
                 parent_v, _ = p.stack[-1]
             else:
-                parent_v = c.hiddenRootNode
+                parent_v = self.outline.hiddenRootNode
             p.v._addLink(p._childIndex, parent_v)
             p.v.setDirty()
         u.p.setAllAncestorAtFileNodesDirty()
@@ -2073,14 +2118,24 @@ class Undoer:
     # @+node:ekr.20050412085112: *4* u.undoInsertNode
     def undoInsertNode(self) -> None:
         c, u = self.c, self
-        if cc := c.chapterController:
+        if cc := u.ask_view('chapterController'):
             cc.selectChapterByName('main')
         u.newP.setAllAncestorAtFileNodesDirty()
         c.selectPosition(u.newP)
         # Bug fix: 2016/03/30.
         # This always selects the proper new position.
         # c.selectPosition(u.p)
-        c.deleteOutline()
+        if delete := u.ask_view('deleteOutline'):
+            delete()
+        else:
+            # No commander, so no commands: do the model half by hand. The
+            # command also chooses the next selection, which is why it is
+            # preferred whenever the view has it.
+            target = u.newP.next() or u.newP.back() or u.newP.parent()
+            u.newP.doDelete(target)
+            if target:
+                c.selectPosition(target)
+            u.outline.setChanged()
         if u.pasteAsClone:
             for bunch in u.beforeTree:
                 v = bunch.v
@@ -2102,7 +2157,7 @@ class Undoer:
     # @+node:ekr.20050411112033: *4* u.undoMove
     def undoMove(self) -> None:
         c, u = self.c, self
-        if cc := c.chapterController:
+        if cc := u.ask_view('chapterController'):
             cc.selectChapterByName('main')
         v = u.p.v
         assert u.oldParent_v
@@ -2159,7 +2214,7 @@ class Undoer:
 
         # Paste the outline and select it.
         s = u.oldPastedTree
-        pasted = c.fileCommands.getLeoOutlineFromClipboardRetainingClones(s)
+        pasted = self.outline.fileCommands.getLeoOutlineFromClipboardRetainingClones(s)
         assert c.p == pasted
 
         # Delete the old tree. Its position should still exist.
@@ -2311,7 +2366,12 @@ class Undoer:
         Update status after either an undo or redo:
         """
         c, u = self.c, self
-        w = c.frame.body.wrapper
+        w = u.body_wrapper()
+        if w is None:
+            # A view with no body buffer still gets structural undo; there is
+            # simply no caret to restore.
+            self.outline.redraw()
+            return
 
         # PR #4809. c.p has already been set.
 
@@ -2319,7 +2379,7 @@ class Undoer:
         # Redrawing *must* be done here before setting u.undoing to False.
         i, j = w.getSelectionRange()
         ins = w.getInsertPoint()
-        c.redraw()
+        self.outline.redraw()
         c.recolor()
         if u.inHead:
             c.editHeadline()

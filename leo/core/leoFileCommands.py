@@ -2057,18 +2057,20 @@ class FileCommands:
     # @+node:ekr.20031218072017.3037: *5* fc.putGlobals (sets window_position)
     def putGlobals(self) -> None:
         """Put a vestigial <globals> element, and write global data to the cache."""
-        c = self.c
         self.put("<globals/>\n")
         if not self.outline.mFileName:
             return
-        if c is None:
-            # leolib: no window, so nothing new to record. Whatever geometry
-            # the file was read with stays in the cache untouched, so a
-            # headless save does not resize the user's window on next open.
+        # Ask the view for geometry rather than asking whether a view exists:
+        # leolib has no window, and a terminal front end has a view but still
+        # no window. Either way, whatever geometry the file was read with stays
+        # in the cache untouched, so saving from a window-less view does not
+        # resize the user's Qt window the next time they open the file.
+        frame = self.outline.frame
+        if frame is None or not hasattr(frame, 'get_window_info'):
             return
-        self.outline.db['body_outline_ratio'] = str(c.frame.compute_ratio())
-        self.outline.db['body_secondary_ratio'] = str(c.frame.compute_secondary_ratio())
-        w, h, left, t = c.frame.get_window_info()
+        self.outline.db['body_outline_ratio'] = str(frame.compute_ratio())
+        self.outline.db['body_secondary_ratio'] = str(frame.compute_secondary_ratio())
+        w, h, left, t = frame.get_window_info()
         self.outline.db['window_position'] = str(t), str(left), str(h), str(w)
 
     # @+node:ekr.20031218072017.3041: *5* fc.putHeader
@@ -2119,9 +2121,10 @@ class FileCommands:
 
         The old way made it almost impossible to delete stylesheet element.
         """
-        c = self.c
-        # No settings without a view: leolib writes no stylesheet line.
-        sheet = (c.config.getString('stylesheet') or '').strip() if c else ''
+        # Ask the document for its settings: with no view, and with a view
+        # that has none, outline.config is Leo's defaults and no stylesheet
+        # line is written.
+        sheet = (self.outline.config.getString('stylesheet') or '').strip()
         # sheet2 = c.frame.stylesheet and c.frame.stylesheet.strip() or ''
         # sheet = sheet or sheet2
         if sheet:

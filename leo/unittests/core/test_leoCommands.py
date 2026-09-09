@@ -212,6 +212,9 @@ class TestCommands(LeoUnitTest):
         c = self.c
         abs_base = '/leo_base'
         c.mFileName = f"{abs_base}/test.leo"
+        # Rebinding os.environ leaks into every later test in the process:
+        # test_g_guessExternalEditor then reads an environment with no EDITOR.
+        self.addCleanup(setattr, os, 'environ', os.environ)
         os.environ = {  # noqa  # Doesn't *clear* os.environ, but that's fine.
             'HOME': '/home',  # Linux.
             'USERPROFILE': r'c:\EKR',  # Windows.

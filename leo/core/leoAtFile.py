@@ -201,7 +201,7 @@ class AtFile:
     # @+node:ekr.20250403154610.1: *4* at.initAllIvars
     def initAllIvars(self, root: Position) -> None:
         """Init all ivars to reasonable defaults."""
-        at, c = self, self.c
+        at = self
         assert root, g.callers()
         # Basic status vars.
         at.errors = 0
@@ -229,7 +229,7 @@ class AtFile:
         at.encoding = self.outline.config.default_derived_file_encoding or 'utf-8'
         at.explicitLineEnding = False
         at.force_newlines_in_at_nosent_bodies = False
-        at.output_newline = g.getOutputNewline(c=c)
+        at.output_newline = g.getOutputNewline(name=self.outline.config.getString('output-newline'))
         at.page_width = self.outline.page_width or 132
         at.tab_width = self.outline.tab_width or -4
 
@@ -1551,6 +1551,7 @@ class AtFile:
     # @+node:ekr.20041005105605.154: *6* at.asisWrite & helper
     def asisWrite(self, root: Position) -> None:  # pragma: no cover
         at, c = self, self.c
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             self.outline.init_error_dialogs()
@@ -1658,6 +1659,7 @@ class AtFile:
         """
         at, c = self, self.c
         root = p.copy()
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             if not p.atAutoNodeName():
@@ -1746,6 +1748,7 @@ class AtFile:
         root is the position of an @clean node.
         """
         at, c = self, self.c
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             fileName = at.initWriteIvars(root)
@@ -1785,6 +1788,7 @@ class AtFile:
         """Write one @edit node."""
         at, c = self, self.c
         root = p.copy()
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             self.outline.init_error_dialogs()
@@ -1821,6 +1825,7 @@ class AtFile:
     def writeOneAtFileNode(self, root: Position) -> None:  # pragma: no cover
         """Write @file or @thin file."""
         at, c = self, self.c
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             fileName = at.initWriteIvars(root)
@@ -1860,6 +1865,7 @@ class AtFile:
         # to be self.c.p -- whatever happened to be selected -- which is
         # both less useful and unavailable with no window.
         at, c, p = self, self.c, root
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             fileName = at.initWriteIvars(root)
@@ -1909,6 +1915,7 @@ class AtFile:
         # to be self.c.p -- whatever happened to be selected -- which is
         # both less useful and unavailable with no window.
         at, c, p = self, self.c, root
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             fileName = at.initWriteIvars(root)
@@ -2048,6 +2055,7 @@ class AtFile:
     def atAutoToString(self, root: Position) -> str:
         """Write the root @auto node to a string, and return it."""
         at = self
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             fileName = at.initWriteIvars(root)
@@ -2080,6 +2088,7 @@ class AtFile:
     def atEditToString(self, root: Position) -> str:  # pragma: no cover
         """Write one @edit node."""
         at = self
+        fileName = ''  # The except clause reads it; initWriteIvars may raise first.
         try:
             self.outline.endEditing()
             if root.hasChildren():
@@ -3390,7 +3399,14 @@ class AtFile:
                 f"{g.tr('already exists.')}\n"
                 f"{g.tr('Overwrite this file?')}"
             )  # fmt: skip
-        result = g.app.gui.runAskYesNoCancelDialog(
+        gui = getattr(g.app, 'gui', None)
+        if gui is None:
+            # A view is attached, but it has no dialog to raise: a terminal
+            # front end has a cursor and folds and no way to ask a question.
+            # Same answer as no view at all rather than a guess.
+            g.es_print(f"not overwriting (no dialog to confirm with): {fileName}")
+            return False
+        result = gui.runAskYesNoCancelDialog(
             c,
             title='Overwrite existing file?',
             yesToAllMessage="Yes To &All",
