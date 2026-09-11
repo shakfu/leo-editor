@@ -22,3 +22,7 @@ leo/test/unittest/.leo_shadow/  export-ignore
 
 *.py                             text eol=lf
 leo/modes/*.py                   -text -eol
+
+# The leolib conformance corpus must keep its exact bytes: one case is a pair
+# of CRLF files, another is latin-1.
+leo/unittests/leolib/corpus/**   -text -eol

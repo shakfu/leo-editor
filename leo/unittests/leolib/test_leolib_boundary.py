@@ -15,6 +15,7 @@ the wrong reason.
 
 # @+<< test_leolib_boundary imports >>
 # @+node:sa.20260906110000.2: ** << test_leolib_boundary imports >>
+import ast
 import json
 import os
 import subprocess
@@ -67,6 +68,63 @@ def run_isolated(body: str) -> str:
     if proc.returncode != 0:
         raise AssertionError(f"subprocess failed:\n{proc.stdout}\n{proc.stderr}")
     return proc.stdout
+
+
+# @+node:sa.20260911130000.1: ** import graph helpers
+def module_path(module: str) -> str | None:
+    """The source file of a leo.* module or package, or None."""
+    base = os.path.join(REPO, *module.split('.'))
+    for path in (base + '.py', os.path.join(base, '__init__.py')):
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def runtime_imports(module: str) -> list[tuple[int, str, str | None]]:
+    """
+    Return (line, imported module, enclosing function) for each import in
+    module that can run: at module level or in a function, but not under
+    `if TYPE_CHECKING`. `importlib.import_module('literal')` counts too.
+    """
+    path = module_path(module)
+    assert path, module
+    package = module if path.endswith('__init__.py') else module.rpartition('.')[0]
+    found: list[tuple[int, str, str | None]] = []
+
+    def visit(node: ast.AST, func: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.If) and 'TYPE_CHECKING' in ast.unparse(child.test):
+                for orelse in child.orelse:
+                    visit_one(orelse, func)
+            else:
+                visit_one(child, func)
+
+    def visit_one(node: ast.AST, func: str | None) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func = node.name
+        elif isinstance(node, ast.Import):
+            found.extend((node.lineno, alias.name, func) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ''
+            if node.level:
+                parts = package.split('.')
+                parts = parts[: len(parts) - node.level + 1]
+                base = '.'.join(parts + ([node.module] if node.module else []))
+            for alias in node.names:
+                sub = f"{base}.{alias.name}"
+                found.append((node.lineno, sub if module_path(sub) else base, func))
+        elif (
+            isinstance(node, ast.Call)
+            and ast.unparse(node.func).endswith('import_module')
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            found.append((node.lineno, str(node.args[0].value), func))
+        visit(node, func)
+
+    with open(path, encoding='utf-8') as f:
+        visit(ast.parse(f.read()), None)
+    return [(n, m, fn) for n, m, fn in found if m.startswith(('leo.', 'PyQt'))]
 
 
 # @+node:sa.20260906110000.4: ** class TestLeolibBoundary
@@ -418,6 +476,98 @@ class TestLeolibBoundary(unittest.TestCase):
         self.assertEqual(results['UNDO2'], 'old')
         self.assertEqual(results['REDO'], 'new|sib')
         self.assertEqual(results['APP'], '', f"undo loaded application modules: {results['APP']}")
+
+    # @+node:sa.20260911130000.2: *3* TestLeolibBoundary.test_no_path_to_an_app_module
+    def test_no_path_to_an_app_module(self):
+        """
+        No import that can run leads from the model to Leo's application or a view.
+
+        Follows every import reachable from leo/leolib and the language
+        importers and writers, including imports inside functions: @auto used
+        to load leoGlobals through one, Outline.persistenceController. The
+        runtime tests see only the paths they take; this sees them all. The
+        importers are seeds because leoPluginRegistry loads them by a computed
+        name.
+        """
+        checker = 'checkPythonCode returns before this when g.app.log is None, as under leolib'
+        # (module, function) -> why that import is not a leak.
+        allowed = {
+            ('leo', 'run'): 'the application launcher',
+            ('leo.core.leoAtFile', 'runRuff'): checker,
+            ('leo.core.leoAtFile', 'runTy'): checker,
+        }
+        forbidden = set(APP_MODULES) | {'leo.core.leoBridge'}
+        forbidden |= {f"leo.core.{name}" for name in VIEW_MODULES}
+
+        def is_forbidden(target: str) -> bool:
+            if target in forbidden or target.startswith('PyQt'):
+                return True
+            model_plugins = ('leo.plugins.importers', 'leo.plugins.writers')
+            return target.startswith('leo.plugins.') and not target.startswith(model_plugins)
+
+        leolib_dir = os.path.join(REPO, 'leo', 'leolib')
+        seeds = [
+            f"leo.leolib.{name[:-3]}".removesuffix('.__init__')
+            for name in os.listdir(leolib_dir)
+            if name.endswith('.py')
+        ]
+        for kind in ('importers', 'writers'):
+            folder = os.path.join(REPO, 'leo', 'plugins', kind)
+            seeds += [
+                f"leo.plugins.{kind}.{name[:-3]}"
+                for name in os.listdir(folder)
+                if name.endswith('.py') and name != '__init__.py'
+            ]
+
+        seen: set[str] = set()
+        used: set[tuple[str, str | None]] = set()
+        leaks: list[str] = []
+        todo = list(seeds)
+        while todo:
+            module = todo.pop()
+            if module in seen or not module_path(module):
+                continue
+            seen.add(module)
+            parts = module.split('.')
+            todo += ['.'.join(parts[:i]) for i in range(1, len(parts))]  # Packages' __init__ runs.
+            for line, target, func in runtime_imports(module):
+                if (module, func) in allowed:
+                    used.add((module, func))
+                elif is_forbidden(target):
+                    leaks.append(f"{module}:{line} in {func or '<module>'} imports {target}")
+                elif module_path(target):
+                    todo.append(target)
+
+        self.assertEqual(leaks, [], 'an import path from the model to an app or view module')
+        self.assertEqual(set(allowed) - used, set(), 'allowed imports that no longer exist')
+        self.assertIn('leo.core.leoPersistence', seen, 'the walk missed a function-level import')
+
+    # @+node:sa.20260912100000.20: *3* TestLeolibBoundary.test_at_auto_unknown_extension
+    def test_at_auto_unknown_extension(self):
+        """
+        An @auto file with no importer reads whole into its node, with no view.
+
+        leoImport.setBodyString asked the Outline for its current node and
+        whether it had changed, and an Outline with no view answers neither.
+        In a subprocess: under unit testing, createOutline asserts that every
+        @auto file has an importer.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, 'thing.xyz'), 'w', encoding='utf-8') as f:
+                f.write('x = 1\n')
+            leo_file = os.path.join(tmp, 'unknown.leo')
+            out = run_isolated(f"""
+                from leo import leolib
+                o = leolib.new_outline()
+                root = o.rootPosition()
+                root.h = 'root'
+                root.insertAsLastChild().h = '@auto thing.xyz'
+                leolib.save(o, {leo_file!r})
+                o = leolib.open_outline({leo_file!r})
+                auto = next(p for p in o.all_unique_positions() if p.h == '@auto thing.xyz')
+                print('BODY', repr(auto.b))
+            """)
+        self.assertIn('x = 1', out.split('BODY', 1)[1])
 
     # @-others
 

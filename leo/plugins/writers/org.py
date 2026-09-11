@@ -30,7 +30,8 @@ class OrgModeWriter(basewriter.BaseWriter):
         Return c.theTagController.
         """
         c = self.c
-        if not getattr(c, 'theTagController', None):
+        # leolib loads no plugins, so it has no controller to load one with.
+        if not getattr(c, 'theTagController', None) and g.app.pluginsController:
             g.app.pluginsController.loadOnePlugin('nodetags.py', verbose=False)
         return getattr(c, 'theTagController', None)
 

@@ -35,11 +35,14 @@ _SUBMODULES = ('api', 'language_data', 'state', 'util', 'view')
 _VIEW_NAMES = ('View',)
 
 __all__ = [
+    'FileReport',
     'Outline',
+    'ReadReport',
     'View',
     'ensure_app',
     'new_outline',
     'open_outline',
+    'open_outline_with_report',
     'read_external_files',
     'save',
     'tangle',

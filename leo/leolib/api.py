@@ -40,6 +40,7 @@ Usage:
 # @+<< leolib imports >>
 # @+node:sa.20260906100000.2: ** << leolib imports >>
 from __future__ import annotations
+import dataclasses
 import os
 from typing import Any, TYPE_CHECKING, cast
 
@@ -58,9 +59,12 @@ if TYPE_CHECKING:  # pragma: no cover
 # @-<< leolib imports >>
 
 __all__ = [
+    'FileReport',
     'Outline',
+    'ReadReport',
     'new_outline',
     'open_outline',
+    'open_outline_with_report',
     'read_external_files',
     'save',
     'to_xml',
@@ -306,6 +310,24 @@ def new_outline(fileName: str = '') -> Outline:
     return outline
 
 
+# @+node:sa.20260912100000.3: ** class FileReport & ReadReport
+@dataclasses.dataclass
+class FileReport:
+    """One external file that could not be read."""
+
+    headline: str
+    path: str
+    message: str
+
+
+@dataclasses.dataclass
+class ReadReport:
+    """What reading an outline's external files reported."""
+
+    read: int = 0
+    errors: list[FileReport] = dataclasses.field(default_factory=list)
+
+
 # @+node:sa.20260906100000.7: ** leolib.open_outline
 def open_outline(path: str, read_external: bool = True) -> Outline:
     """
@@ -321,6 +343,21 @@ def open_outline(path: str, read_external: bool = True) -> Outline:
     The window size and pane ratios the file records are put on
     outline.window_geometry rather than applied to anything; a front end that
     wants them reads them from there.
+    """
+    return open_outline_with_report(path, read_external)[0]
+
+
+# @+node:sa.20260912100000.2: ** leolib.open_outline_with_report
+def open_outline_with_report(path: str, read_external: bool = True) -> tuple[Outline, ReadReport]:
+    """
+    open_outline, with what reading the external files reported.
+
+    A file that could not be read leaves its node as the .leo file described
+    it, which for an @file node is empty. A front end should say so, or the
+    empty node reads as the file's contents. A file counts as unread if it is
+    missing, has no valid sentinels, or its read raised; @nosent files are never
+    read, so a missing one is no error. The corpus's unreadable case checks this
+    against Rust.
     """
     ensure_app()
     path = g.finalize(path)
@@ -338,10 +375,9 @@ def open_outline(path: str, read_external: bool = True) -> Outline:
     if v is None:
         raise ValueError(f"not a readable .leo file: {path}")
     outline.hiddenRootNode = v
-    if read_external:
-        read_external_files(outline)
+    report = _read_external(outline) if read_external else ReadReport()
     outline.changed = False
-    return outline
+    return outline, report
 
 
 # @+node:sa.20260906140000.1: ** leolib.read_external_files
@@ -355,12 +391,17 @@ def read_external_files(outline: Outline) -> int:
     bulk work it exists for. Failures leave the node as the .leo file described
     it, which is what Leo itself does.
     """
+    return _read_external(outline).read
+
+
+def _read_external(outline: Outline) -> ReadReport:
+    """read_external_files, returning what it reported."""
     from leo.core import leoAtFile
 
     at = leoAtFile.AtFile(outline)
     outline.ignored_at_file_nodes = []
     outline.orphan_at_file_nodes = []
-    count = 0
+    report = ReadReport()
     # findFilesToRead does the selecting: it honours @ignore, skips clones of
     # the same path, and yields each tree once. readFileAtPosition then
     # dispatches on the node's kind: @file, @clean, @edit, @auto, @shadow
@@ -368,20 +409,30 @@ def read_external_files(outline: Outline) -> int:
     # them reports every non-sentinel file as invalid.
     with outline.batch_events():
         for p in at.findFilesToRead(outline.rootPosition(), all=True):
+            headline, path = p.h, outline.fullPath(p)
+            missing = not p.isAtNoSentFileNode() and not os.path.exists(path)
             try:
-                at.readFileAtPosition(p)
-                count += 1
-            except Exception:  # pragma: no cover (depends on files on disk)
+                ok = at.readFileAtPosition(p)
+                message = 'no such file' if missing else f"not a valid external file: {path}"
+            except Exception as e:  # pragma: no cover (depends on files on disk)
                 g.es_exception()
+                ok, message = False, str(e)
+            if ok and not missing:
+                report.read += 1
+                continue
+            report.errors.append(FileReport(headline, path, message))
+            # Leo marks a file read even when reading failed (#760531). Unmark
+            # it, so that a later write refuses to overwrite what it never read.
+            getattr(p.v, 'at_read', {}).pop(path, None)
     for p in at.findFilesToRead(outline.rootPosition(), all=True):
         p.v.clearDirty()
-    return count
+    return report
 
 
 # @+node:sa.20260907100000.1: ** leolib.write_external_files
 def write_external_files(outline: Outline, dirty_only: bool = False) -> int:
     """
-    Write every @file, @clean, @edit and @nosent tree back to disk.
+    Write every @<file> tree back to disk, or with dirty_only only the dirty ones.
 
     Tangle: the outline is the source of truth and the external files are
     regenerated from it. The counterpart of read_external_files, and the half
@@ -398,17 +449,31 @@ def write_external_files(outline: Outline, dirty_only: bool = False) -> int:
     Returns the number of files actually rewritten.
     """
     at = outline.atFileCommands
-    before = at.unchangedFiles
-    written_before = _count_files_to_write(at, outline)
-    at.writeAll(all=False, dirty=dirty_only)
-    # writeAll counts the files it left alone; the rest it rewrote.
-    return max(0, written_before - (at.unchangedFiles - before))
-
-
-def _count_files_to_write(at: Any, outline: Outline) -> int:
-    """How many @<file> trees writeAll will consider."""
+    marked = []
+    if not dirty_only:
+        # writeAll writes only dirty trees, so mark the clean ones for it.
+        for p in at.findFilesToRead(outline.rootPosition(), all=True):
+            if not p.isDirty():
+                p.v.setDirty()
+                marked.append(p.v)
     files, _root = at.findFilesToWrite(False)
-    return len(files)
+    paths = [outline.fullPath(p) for p in files]
+    before = [_contents(path) for path in paths]
+    at.writeAll(all=False, dirty=dirty_only)
+    for v in marked:
+        v.clearDirty()  # A tree whose file was unchanged stays as it was.
+    # Count by the files themselves: writeAll resets its own tally on every
+    # call, and does not count the files it refuses to overwrite.
+    return sum(1 for path, old in zip(paths, before) if _contents(path) != old)
+
+
+def _contents(path: str) -> bytes | None:
+    """A file's bytes, or None if it does not exist."""
+    try:
+        with open(path, 'rb') as f:
+            return f.read()
+    except OSError:
+        return None
 
 
 # @+node:sa.20260907100000.2: ** leolib.tangle

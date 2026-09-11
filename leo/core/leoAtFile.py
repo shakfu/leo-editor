@@ -471,10 +471,11 @@ class AtFile:
         root.clearVisitedInTree()
         gnx2vnode = self.outline.fileCommands.gnxDict
         contents = fromString or file_s
-        FastAtRead(self.outline, gnx2vnode).read_into_root(contents, fileName or '', root)
+        # False when the file has no valid sentinels, so nothing was read.
+        ok = FastAtRead(self.outline, gnx2vnode).read_into_root(contents, fileName or '', root)
         root.clearDirty()
         g.doHook('after-reading-external-file', c=c, p=root)
-        return True
+        return ok
 
     # @+node:ekr.20071105164407: *6* at.deleteUnvisitedNodes
     def deleteUnvisitedNodes(self, root: Position) -> None:  # pragma: no cover
@@ -626,9 +627,10 @@ class AtFile:
         return files
 
     # @+node:ekr.20190108054803.1: *6* at.readFileAtPosition
-    def readFileAtPosition(self, p: Position) -> None:  # pragma: no cover
+    def readFileAtPosition(self, p: Position) -> bool:  # pragma: no cover
         """
-        Read the @<file> node at p."""
+        Read the @<file> node at p. Return False if an @file file had no
+        valid sentinels, so that nothing was read."""
         at, c = self, self.c
 
         if p.isAtAsisFileNode():
@@ -647,7 +649,7 @@ class AtFile:
         elif p.isAtEditNode():
             at.readOneAtEditNode(p)
         elif p.isAtFileNode() or p.isAtThinFileNode():
-            at.read(p)
+            return at.read(p)
         elif p.isAtJupytextNode():
             at.readOneAtJupytextNode(p)
         elif p.isAtNoSentFileNode():
@@ -655,6 +657,7 @@ class AtFile:
         elif p.isAtShadowFileNode():
             fileName = p.anyAtFileNodeName()
             at.readOneAtShadowNode(fileName, p)
+        return True
 
     # @+node:ekr.20220121052056.1: *5* at.readAllSelected
     def readAllSelected(self, root: Position) -> None:  # pragma: no cover
@@ -1714,7 +1717,8 @@ class AtFile:
 
                 def writer_for_at_auto_cb(root: Position) -> str | None:
                     try:
-                        writer = aClass(at.c)  # noqa
+                        # With no view, the outline: a writer needs only atFileCommands.
+                        writer = aClass(at.c or at.outline)  # noqa
                         s = writer.write(root)
                         return s
                     except Exception:
@@ -1733,7 +1737,7 @@ class AtFile:
 
             def writer_for_ext_cb(root: Position) -> str | None:
                 try:
-                    return aClass(at.c).write(root)
+                    return aClass(at.c or at.outline).write(root)  # See writer_for_at_auto.
                 except Exception:
                     g.es_exception()
                     return None
@@ -2426,9 +2430,13 @@ class AtFile:
 
         def put_verbatim_sentinel() -> None:
             """Put an @verbatim sentinel."""
-            if at.root.isAtCleanNode():
-                # #2996. Adding an @verbatim sentinel interferes with the @clean algorithm.
-                return  # # pragma: no cover (defensive)
+            # Only when writing sentinels: otherwise the sentinel vanishes but
+            # its indent does not, doubling the line's own. The #2996 guard
+            # skipped every @clean write instead, including the sentinel text
+            # that reading an @clean file compares against, where the unescaped
+            # line was then doubled.
+            if not (at.sentinels or g.app.force_at_auto_sentinels):
+                return
             ws = s[i:k]
             self.putIndent(len(ws))
             self.putSentinel("@verbatim")

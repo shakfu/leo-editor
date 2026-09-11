@@ -7,7 +7,7 @@
 
 line-length = 100
 
-extend-exclude = ["*.md"]
+extend-exclude = ["*.md", "leo/unittests/leolib/corpus"]  # The corpus keeps its exact bytes.
 
 [format]
 docstring-code-format = false

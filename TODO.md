@@ -21,7 +21,7 @@ its external files imports 13 `leo.*` modules; the same file through `leoBridge`
 imports 105. The model still lives in `leo/core`; see section 3. None of the
 three front ends uses `leolib` yet, but a fourth does: `leo/leotui` opens,
 folds, edits and saves a `.leo` file, and tangles its external files, through
-`leolib` alone, undo included. 953 tests pass headless and under real PyQt6;
+`leolib` alone, undo included. 959 tests pass headless and under real PyQt6;
 `ruff`, `ty` and `check_leo_sync` are clean.
 
 ---
@@ -271,6 +271,12 @@ imported `leoGlobals`. It now imports `util` and checks for application
 modules, and `test_at_auto_loads_no_app_module` reads and writes an `@auto`
 file.
 
+`test_no_path_to_an_app_module` checks the import graph statically. It follows
+every import that can run, including those inside functions, from
+`leo/leolib` and the importers and writers. Three function-level imports are
+allowed, each with a reason in the test: `leo.run`, and `leoAtFile`'s
+`runRuff` and `runTy`. An allowed entry that no longer exists fails the test.
+
 **The four seams**, each replacing something the model used to ask `g.app` for:
 
 | seam | replaced |
@@ -329,25 +335,52 @@ the old paths first. See **Pick up here** at the top of this file.
 
 ---
 
-## 5. Conformance corpus (for a future `leolib-rs`)
+## 5. Conformance corpus (shared with leo-rs)
 
-If the model is reimplemented in Rust, the Python `leolib` becomes an executable
-specification and the oracle to test against. Two properties already exist in
-`leo/unittests/leolib/test_leolib_boundary.py` and are the right ones:
+The Rust port (`~/projects/leo-rs`) and this `leolib` answer to one corpus.
+`leo-rs/scripts/make_corpus.py` builds it in `leo-rs/demo/` and writes each
+case's `.expected.json` from Python `leolib`; `crates/leolib/tests/corpus.rs`
+checks Rust against it. `leo/unittests/leolib/corpus/` is a byte-identical
+copy, and `test_leolib_corpus.py` checks Python against it: each case reads to
+the expected positions, `to_xml` reproduces each `.leo` file, and writing every
+external file changes no byte. Refresh the copy from `leo-rs` with
 
-- `test_external_files_match_full_leo` — read a `.leo` file through `leolib` and
-  through `leoBridge`, hash `headline + body` per gnx, require equality.
-- `test_tangle_matches_disk` — tangling every external file reproduces it byte
-  for byte.
+    python3 scripts/make_corpus.py --leo-editor ~/projects/leo-editor --check \
+        --copy-to ~/projects/leo-editor/leo/unittests/leolib/corpus
 
-- [ ] **Widen the corpus.** `LeoPyRef.leo` contains only `@file`, `@clean` and
-      `@edit`, and just 2 of its 11,581 vnodes have more than one parent. It
-      cannot exercise the model. A corpus should add: clones (several parents,
-      and a clone whose subtree is edited), CRLF line endings, non-UTF-8
-      encodings, all six directives, `@auto` in several languages, and **a file
-      whose ordinary content looks like sentinels**.
-- [ ] **Turn the two properties into golden files** so a port can be checked
-      without a Python Leo in the loop.
+`.gitattributes` keeps the copy's exact bytes: it holds CRLF and latin-1 files.
+
+- [x] **Widen the corpus.** Nine cases: clones, CRLF line endings, latin-1, all
+      six directives, `@auto` in four languages, sentinel lookalikes, and three
+      real outlines, `LeoPyRef.leo` among them.
+- [x] **Golden files**, so neither implementation needs the other to test.
+- [x] **The lookalike case found a Leo bug, fixed 2026-09-12.** Reading an
+      unchanged `@clean` file doubled every line that looks like a sentinel,
+      and writing `@nosent` doubled such a line's indentation.
+      `put_verbatim_sentinel` wrote the escape's indent even when no sentinel
+      followed. The #2996 guard (995dadf445) avoided that for `@clean` writes
+      by skipping the escape for `@clean` altogether, which broke the read. The
+      escape is now skipped only when no sentinels are written. Worth
+      reporting upstream, with the `sentinel_lookalikes` case.
+- [x] **Unread files agree.** The `unreadable` case holds an `@file` with no
+      sentinels, which both implementations report unread and refuse to
+      overwrite. Python had reported every file read: `at.read` returned
+      `True` without checking `read_into_root`. And Leo marks a file read even
+      when reading failed (#760531), so a headless write replaced it. `leolib`
+      now unmarks a failed read; GUI Leo keeps #760531.
+- [x] **`write_external_files` writes every tree**, as its docstring and Rust
+      say; it wrote only dirty ones. Its count now compares file contents:
+      `writeAll` resets its own tally on each call and does not count refusals.
+- [x] **`@auto` works with no view.** The Markdown and Org writers were built
+      with `at.c`, which is `None` without a view, so the corpus's write check
+      passed on them by writing nothing; Org also needed a plugins controller.
+      An `@auto` file with no importer crashed in `leoImport.setBodyString`.
+- [ ] **`@edit` decodes a non-UTF-8 file lossily, in both implementations.**
+      A probe read the bytes `caf\xe9` as `caf` followed by U+FFFD in each.
+      Writing it back would
+      then store U+FFFD in place of the byte; that is inferred, not tested.
+- [ ] **An `@auto` file with no importer:** Leo reads it whole into the node;
+      Rust reports it unread. Not in the corpus.
 
 **Traps worth encoding in the corpus,** each of which cost time here:
 
@@ -413,7 +446,7 @@ Not oversights — each was investigated and left deliberately.
 ## Running the checks
 
 ```bash
-uv run python run_ci_unit_tests.py      # 953 tests; 4 skips under Qt, 23 without
+uv run python run_ci_unit_tests.py      # 959 tests; 4 skips under Qt, 23 without
 uv run ruff check leo
 uv run ruff format --check leo
 uv run ty check leo

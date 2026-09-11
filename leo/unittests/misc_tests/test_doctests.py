@@ -77,8 +77,11 @@ class TestDocTests(unittest.TestCase):  # No need to be a subclass of leoTest2.L
             files = glob.glob(path, recursive=True)
             files = [z for z in files if not z.endswith('__init__.py')]
             for f in files:
-                # Exclude two problematic files.
+                # Exclude two problematic files, and the leolib corpus, whose
+                # files keep their exact bytes (one is latin-1).
                 if 'dtest.py' in f or 'javascript.py' in f:
+                    continue
+                if os.path.join('leolib', 'corpus') in f:
                     continue
                 fails, count = doctest.testfile(f, False)
                 n += count

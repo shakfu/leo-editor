@@ -1265,7 +1265,7 @@ class LeoImportCommands:
         if not c or not p:
             return
         s = g.toUnicode(s, self.encoding)
-        if c.p and p.v == c.p.v:
+        if c.frame and c.p and p.v == c.p.v:  # No widget to sync without a view.
             w = c.frame.body.wrapper
             i = len(s)
             w.setAllText(s)
@@ -1275,7 +1275,7 @@ class LeoImportCommands:
             v.setBodyString(s)
             v.setSelection(0, 0)
             p.setDirty()
-            if not c.isChanged():
+            if not c.changed:  # c may be an Outline, which has no isChanged.
                 c.setChanged()
 
     # @+node:ekr.20031218072017.3306: *4* ic.createHeadline

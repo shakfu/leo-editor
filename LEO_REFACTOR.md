@@ -271,7 +271,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 953 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
+| 0 — Safety net | **done** — 959 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -288,7 +288,7 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 953 unit tests passed.        # 23 skipped
+run_ci_unit_tests.py: 959 unit tests passed.        # 23 skipped
 
 $ ruff check leo && ruff format --check leo
 All checks passed!  /  568 files already formatted
@@ -303,7 +303,7 @@ All four CI gates pass, headless *and* under real PyQt6 via `uv run`:
 ruff check leo         All checks passed!
 ruff format --check    568 files already formatted
 ty check leo           All checks passed!
-run_ci_unit_tests.py   953 passed  (23 skips headless, 4 under Qt)
+run_ci_unit_tests.py   959 passed  (23 skips headless, 4 under Qt)
 check_leo_sync         LeoPyRef.leo is in sync
 ```
 
