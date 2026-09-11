@@ -28,10 +28,15 @@ import importlib
 from typing import Any
 
 # The package's own modules. See __getattr__.
-_SUBMODULES = ('api', 'language_data', 'state', 'util')
+_SUBMODULES = ('api', 'language_data', 'state', 'util', 'view')
+
+# Names served by leo.leolib.view rather than api, so reading a file does not
+# load the view.
+_VIEW_NAMES = ('View',)
 
 __all__ = [
     'Outline',
+    'View',
     'ensure_app',
     'new_outline',
     'open_outline',
@@ -61,7 +66,8 @@ def __getattr__(name: str) -> Any:
     # through building util.
     if name.startswith('_') or name in _SUBMODULES:
         raise AttributeError(name)
-    api = importlib.import_module('leo.leolib.api')
+    source = 'leo.leolib.view' if name in _VIEW_NAMES else 'leo.leolib.api'
+    api = importlib.import_module(source)
     try:
         value = getattr(api, name)
     except AttributeError:

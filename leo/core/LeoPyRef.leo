@@ -137,6 +137,7 @@
 <v t="sa.20260906150000.1"><vh>@file ../leolib/language_data.py</vh></v>
 <v t="sa.20260908160000.1"><vh>@file ../leolib/state.py</vh></v>
 <v t="sa.20260908140000.1"><vh>@file ../leolib/util.py</vh></v>
+<v t="sa.20260911120000.10"><vh>@file ../leolib/view.py</vh></v>
 <v t="sa.20260905210000.1"><vh>@file ../tui/__init__.py</vh></v>
 <v t="sa.20260905210100.1"><vh>@file ../tui/model.py</vh></v>
 <v t="sa.20260905210200.1"><vh>@file ../tui/screen.py</vh></v>

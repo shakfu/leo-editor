@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
-from leo.core import leoGlobals as g
+from leo.leolib import util as g
 from leo.plugins.importers.base_importer import Importer
 
 if TYPE_CHECKING:

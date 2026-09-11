@@ -2841,6 +2841,12 @@ def _callerName(n: int) -> str:
         return ''  # "<no caller name>"
 
 
+# @+node:sa.20260911120000.3: *3* util.my_name
+def my_name(i: int = 1) -> str:
+    """Return the name of the function or method calling this function"""
+    return callers(-1).split(',')[0]
+
+
 # @+node:sa.20260908170000.9: *3* util.es_print
 def es_print(*args: Args, **kwargs: KWargs) -> None:
     """

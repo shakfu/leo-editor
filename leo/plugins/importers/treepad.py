@@ -5,7 +5,7 @@
 from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
-import leo.core.leoGlobals as g  # Required.
+from leo.leolib import util as g  # Required.
 from leo.plugins.importers.base_importer import Importer
 
 if TYPE_CHECKING:

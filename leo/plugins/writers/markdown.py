@@ -4,7 +4,7 @@
 
 import re
 from urllib.parse import quote
-from leo.core import leoGlobals as g
+from leo.leolib import util as g
 from leo.core.leoNodes import Position
 from leo.plugins.writers import basewriter
 

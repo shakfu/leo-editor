@@ -44,6 +44,9 @@ VIEW_MODULES = (
     'leoQt',
 )
 
+# Leo's application modules. The model must not need them either.
+APP_MODULES = ('leo.core.leoGlobals', 'leo.core.leoCommands', 'leo.core.leoApp')
+
 
 # @+others
 # @+node:sa.20260906110000.3: ** def run_isolated
@@ -106,7 +109,8 @@ class TestLeolibBoundary(unittest.TestCase):
         out = run_isolated(f"""
             import sys
             from leo import leolib
-            from leo.core import leoGlobals as g
+            # util, not leoGlobals: importing leoGlobals here would hide a leak.
+            from leo.leolib import util as g
             leolib.ensure_app()
             before = len([m for m in sys.modules if m.startswith('leo.plugins')])
             g.app.atAutoDict          # First touch: loads the importers.
@@ -118,19 +122,23 @@ class TestLeolibBoundary(unittest.TestCase):
             view = {VIEW_MODULES!r}
             leaks = [m for m in sys.modules
                      if m.startswith('leo.') and any(k in m for k in view)]
+            app = [m for m in {APP_MODULES!r} if m in sys.modules]
             print('BEFORE', before)
             print('AFTER', len(after))
             print('OTHER', ','.join(other))
             print('LEAKS', ','.join(sorted(leaks)))
+            print('APP', ','.join(app))
         """)
         before = int(out.split('BEFORE')[1].split('\n')[0].strip())
         after = int(out.split('AFTER')[1].split('\n')[0].strip())
         other = out.split('OTHER')[1].split('\n')[0].strip()
         leaks = out.split('LEAKS')[1].split('\n')[0].strip()
+        app = out.split('APP')[1].split('\n')[0].strip()
         self.assertEqual(before, 0, 'the importers loaded before anything asked')
         self.assertGreater(after, 20, 'the importers did not load')
         self.assertEqual(other, '', f"leolib imported other plugins: {other}")
         self.assertEqual(leaks, '', f"a view module came in with them: {leaks}")
+        self.assertEqual(app, '', f"the importers loaded application modules: {app}")
 
     # @+node:sa.20260906110000.6: *3* TestLeolibBoundary.test_round_trip_pulls_in_no_view_module
     def test_round_trip_pulls_in_no_view_module(self):
@@ -324,6 +332,92 @@ class TestLeolibBoundary(unittest.TestCase):
         """)
         count = int(out.split('COUNT')[1].split('\n')[0].strip())
         self.assertLess(count, 20, f"leolib now imports {count} leo modules")
+
+    # @+node:sa.20260911120000.1: *3* TestLeolibBoundary.test_at_auto_loads_no_app_module
+    def test_at_auto_loads_no_app_module(self):
+        """
+        Reading and writing an @auto file must not load leoGlobals or leoCommands.
+
+        @auto structure comes from the language importers under leo/plugins,
+        and seventeen of them imported leoGlobals, so one @auto node took
+        leolib from 13 modules to 53.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            auto_py = os.path.join(tmp, 'auto.py')
+            with open(auto_py, 'w', encoding='utf-8') as f:
+                f.write('def alpha():\n    return 1\n')
+            leo_file = os.path.join(tmp, 'auto.leo')
+            out = run_isolated(f"""
+                import sys
+                from leo import leolib
+                o = leolib.new_outline()
+                root = o.rootPosition()
+                root.h = 'root'
+                root.insertAsLastChild().h = '@auto auto.py'
+                leolib.save(o, {leo_file!r})
+                o = leolib.open_outline({leo_file!r})
+                auto = next(p for p in o.all_unique_positions() if p.h == '@auto auto.py')
+                print('CHILDREN', '|'.join(c.h for c in auto.children()))
+                fn = auto.firstChild()
+                fn.b = fn.b.replace('return 1', 'return 42')
+                print('WRITTEN', leolib.write_external_files(o))
+                print('APP', ','.join(m for m in {APP_MODULES!r} if m in sys.modules))
+            """)
+            with open(auto_py, encoding='utf-8') as f:
+                text = f.read()
+        children = out.split('CHILDREN')[1].split('\n')[0].strip()
+        written = out.split('WRITTEN')[1].split('\n')[0].strip()
+        app = out.split('APP')[1].split('\n')[0].strip()
+        self.assertEqual(children, 'function: alpha')
+        self.assertEqual(written, '1')
+        self.assertIn('return 42', text)
+        self.assertEqual(app, '', f"@auto loaded application modules: {app}")
+
+    # @+node:sa.20260911120000.2: *3* TestLeolibBoundary.test_undo_needs_a_view
+    def test_undo_needs_a_view(self):
+        """
+        Undo asks for a view explicitly, and works through leolib's own.
+
+        Undo restores the caret into the acting view. An outline with no view
+        used to raise AttributeError from deep inside Undoer.
+        """
+        out = run_isolated(f"""
+            import sys
+            from leo import leolib
+            o = leolib.new_outline()
+            root = o.rootPosition()
+            root.h = 'old'
+            try:
+                leolib.undoer(o)
+                print('ERROR none')
+            except ValueError:
+                print('ERROR ValueError')
+            leolib.View(o)
+            u = leolib.undoer(o)
+            bunch = u.beforeChangeHeadline(root)
+            root.h = 'new'
+            u.afterChangeHeadline(root, 'Change Headline', bunch)
+            bunch = u.beforeInsertNode(root)
+            sib = root.insertAfter()
+            sib.h = 'sib'
+            u.afterInsertNode(sib, 'Insert Node', bunch)
+            heads = lambda: '|'.join(p.h for p in o.all_unique_positions())
+            print('EDITED', heads())
+            u.undo(); print('UNDO1', heads())
+            u.undo(); print('UNDO2', heads())
+            u.redo(); u.redo(); print('REDO', heads())
+            print('APP', ','.join(m for m in {APP_MODULES!r} if m in sys.modules))
+        """)
+        results = {
+            key: out.split(key)[1].split('\n')[0].strip()
+            for key in ('ERROR', 'EDITED', 'UNDO1', 'UNDO2', 'REDO', 'APP')
+        }
+        self.assertEqual(results['ERROR'], 'ValueError', 'undoer accepted an outline with no view')
+        self.assertEqual(results['EDITED'], 'new|sib')
+        self.assertEqual(results['UNDO1'], 'new')
+        self.assertEqual(results['UNDO2'], 'old')
+        self.assertEqual(results['REDO'], 'new|sib')
+        self.assertEqual(results['APP'], '', f"undo loaded application modules: {results['APP']}")
 
     # @-others
 

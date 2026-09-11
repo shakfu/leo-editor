@@ -7,7 +7,7 @@ This is very different from rst3's write code.
 This module must **not** be named rst, so as not to conflict with docutils.
 """
 
-from leo.core import leoGlobals as g  # Required
+from leo.leolib import util as g  # Required
 from leo.core.leoNodes import Position
 from leo.plugins.writers import basewriter
 import leo.plugins.importers.leo_rst as rst_importer

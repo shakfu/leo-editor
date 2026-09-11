@@ -2,7 +2,7 @@
 # @+node:ekr.20180202053206.1: * @file ../plugins/writers/treepad.py
 """The @auto write code for TreePad (.hjt) files."""
 
-from leo.core import leoGlobals as g
+from leo.leolib import util as g
 from leo.core.leoNodes import Position
 from leo.plugins.writers import basewriter
 

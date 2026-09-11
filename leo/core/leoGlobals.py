@@ -73,6 +73,7 @@ from leo.leolib.util import (  # noqa: F401
     set_delims_from_language,
     _context,
     caller,
+    my_name,
     chdir,
     checkUnchangedIvars,
     deprecated,
@@ -2214,12 +2215,6 @@ def callers_list(n: int = 4) -> list[str]:
             break
         i += 1
     return list(reversed(result))
-
-
-# @+node:ekr.20230929150105.1: *5* g.my_name
-def my_name(i: int = 1) -> str:
-    """Return the name of the function or method calling this function"""
-    return g.callers(-1).split(',')[0]
 
 
 # @+node:ekr.20260330144349.1: *4* g.checkClass/QtTextWidget/TextWidget/Widget

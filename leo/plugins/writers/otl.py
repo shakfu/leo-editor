@@ -2,7 +2,7 @@
 # @+node:ekr.20140726091031.18078: * @file ../plugins/writers/otl.py
 """The @auto write code for vimoutline (.otl) files."""
 
-from leo.core import leoGlobals as g
+from leo.leolib import util as g
 from leo.core.leoNodes import Position
 from leo.plugins.writers import basewriter
 

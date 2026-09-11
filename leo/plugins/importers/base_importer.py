@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Generator
 import re
 from typing import TYPE_CHECKING
-from leo.core import leoGlobals as g
+from leo.leolib import util as g
 
 # This import is safe because these imports happen after initing Leo.
 from leo.core.leoNodes import Position, VNode

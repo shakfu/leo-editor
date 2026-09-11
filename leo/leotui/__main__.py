@@ -2,7 +2,7 @@
 Run the terminal front end:  python -m leo.leotui FILE.leo [--dump]
 
 The whole point of this program is what it does *not* import. It opens the
-outline through leolib, attaches a TuiView, and edits the model directly.
+outline through leolib, attaches a leolib View, and edits the model directly.
 Nothing here imports leoGlobals, leoCommands, leoBridge or any view module;
 test_leotui_boundary asserts it.
 

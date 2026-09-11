@@ -2,7 +2,7 @@
 # @+node:ekr.20141116100154.2: * @file ../plugins/writers/dart.py
 """The @auto write code for dart."""
 
-from leo.core import leoGlobals as g  # Required
+from leo.leolib import util as g  # Required
 from leo.core.leoNodes import Position
 from leo.plugins.writers import basewriter
 

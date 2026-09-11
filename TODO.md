@@ -21,7 +21,7 @@ its external files imports 13 `leo.*` modules; the same file through `leoBridge`
 imports 105. The model still lives in `leo/core`; see section 3. None of the
 three front ends uses `leolib` yet, but a fourth does: `leo/leotui` opens,
 folds, edits and saves a `.leo` file, and tangles its external files, through
-`leolib` alone, undo included. 949 tests pass headless and under real PyQt6;
+`leolib` alone, undo included. 953 tests pass headless and under real PyQt6;
 `ruff`, `ty` and `check_leo_sync` are clean.
 
 ---
@@ -32,11 +32,13 @@ folds, edits and saves a `.leo` file, and tangles its external files, through
 dependency work is finished and enforced by tests; what remains is where the
 files live.
 
-`leo/leolib/` holds `util.py`, `state.py`, `language_data.py`, `api.py` and an
-empty `__init__.py`. The nine model modules — `leoNodes`, `leoOutline`,
-`leoFileCommands`, `leoAtFile`, `leoShadow`, `leoImport`, `signal_manager`,
-`leoPluginRegistry` and `leoUndo` — still sit in `leo/core/`, even though nothing about their
-imports requires it any more. Moving them is `git mv` plus four mechanical
+`leo/leolib/` holds `util.py`, `state.py`, `language_data.py`, `api.py`,
+`view.py` and an `__init__.py` with no imports. The ten model modules —
+`leoNodes`, `leoOutline`, `leoFileCommands`, `leoAtFile`, `leoShadow`,
+`leoImport`, `signal_manager`, `leoPluginRegistry`, `leoUndo` and
+`leoPersistence` — still sit in `leo/core/`, even though nothing about their
+imports requires it any more. The language importers and writers under
+`leo/plugins` are model code too. Moving them is `git mv` plus four mechanical
 follow-ups (below). The decision is what the old import paths should do:
 
 | option | cost |
@@ -104,17 +106,19 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 - [x] **`leo/leotui`: a terminal front end on `leolib`.** Done, as a second
       package beside `leo/tui` rather than a rename, so the two can be measured
       against each other. Opening `LeoPyRef.leo` and reading all 376 external
-      files imports **17** `leo.*` modules through `leotui` and **108** through
-      `leo/tui`'s `leoBridge`; both build the same 11,579 nodes.
+      files imports **18** `leo.*` modules through `leotui` and **107** through
+      `leo/tui`'s `leoBridge`; both build the same 11,581 nodes.
       `test_leotui.py` asserts the count stays under 40 and that no
       `leoGlobals`, `leoCommands`, `leoBridge` or view module is imported at
       all. Editing, structural edits, per-view folds and tangling to disk are
       each covered.
 
-      **What a front end has to supply is `leo/leotui/view.py`**: 10 members,
-      119 lines. It holds a `ViewState`, a current position, a text buffer and
-      two redraw flags -- and nothing else, because it no longer has to
-      impersonate a window to be allowed to save.
+      **What a front end has to supply is a view.** `leolib.View`
+      (`leo/leolib/view.py`) is the minimal one, and `leotui` uses it
+      unchanged. It holds a `ViewState`, a current position, a text buffer and
+      a redraw flag -- and nothing else, because it no longer has to
+      impersonate a window to be allowed to save. It was `leotui`'s `TuiView`
+      until undo needed a view that a script could attach.
 
       That is the result of the fix below, not of the first draft. `TuiView`
       started at ~20 members and 234 lines, most of them settings, a document
@@ -169,8 +173,14 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
       `leoGlobals` is not among them. `leolib.undoer(outline)` creates the
       stack on first use -- one outline, one history, shared by every view --
       and imports `leoUndo` only then, so a script that just reads a `.leo`
-      file still opens `LeoPyRef.leo` in 10 modules. Through `leotui` the count
+      file still opens `LeoPyRef.leo` in 13 modules. Through `leotui` the count
       goes 17 to 18.
+
+      Undo restores the caret into the acting view, so it needs one.
+      `leolib.undoer` raises `ValueError` on an outline with no view; a script
+      attaches `leolib.View(outline)` first. Until 2026-09-11 it raised
+      `AttributeError` from inside `Undoer`, and only the `leotui` path, which
+      always has a view, was tested.
 
       Two names had to move with it. `checkUnicode` was view-free and belongs
       in `util`; `leoGlobals` re-exports it, so `g.checkUnicode` is unchanged
@@ -189,7 +199,7 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
       |---|---|
       | `c.config` for granularity and stack size | `outline.config`: settings are the document's |
       | `c.frame.menu` relabelling Edit/Undo | `u.menu_bar()`; the labels are u's own state and are tracked with or without a menu |
-      | `c.frame.body.wrapper` | `u.body_wrapper()`; a view with no buffer still gets structural undo |
+      | `c.frame.body.wrapper` | `u.body_wrapper()` in some helpers; `createCommonBunch` and the body helpers still read `c.frame.body.wrapper`, so a view needs a buffer even for structural undo |
       | `g.app.gui.isTextWrapper` | `g.is_text_wrapper` |
       | `c.recolor`, `c.bodyWantsFocus`, `c.editHeadline` | still the view's job, and a terminal's are no-ops |
       | `c.checkOutline`, `c.chapterController`, `c.deleteOutline` | `u.ask_view(...)`, with a model fallback where undo needs one |
@@ -230,7 +240,7 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 
 ## 3. Make `leolib` a package, not a facade
 
-`leo/leolib/` holds five modules:
+`leo/leolib/` holds six modules:
 
 | module | what it is |
 |---|---|
@@ -238,6 +248,7 @@ Nothing yet consumes the boundary from outside, so nothing proves it is usable.
 | `state.py` | The names Leo rebinds while it runs: `app`, the host flags, the language tables, and the four seams. Imports only `language_data`. |
 | `language_data.py` | Comment delimiters and file extensions. Imports nothing. |
 | `api.py` | The library: `open_outline`, `save`, `tangle`, `write_external_files`. |
+| `view.py` | `View`, the minimal view: what the model asks of one. Undo needs a view; `leotui` uses this one. |
 | `__init__.py` | Empty of imports, so `leoGlobals` can import `util` without a cycle. |
 
 `leoGlobals` imports every name in `util` back, so `g.splitLines` and
@@ -250,6 +261,15 @@ flags are properties over `state` on *both* modules, so a model module cannot
 tell which one it was handed. `test_no_leoGlobals_anywhere` says so, and is
 easy to break — one `from leo.core import leoGlobals as g` in a model module
 puts all 5,800 lines back.
+
+The language importers and writers, and `leoPersistence`, import `util` too.
+Until 2026-09-11, 17 importers and writers and `leoPersistence` imported
+`leoGlobals`, and `basewriter` and `org` imported `leoCommands` at run time,
+so one `@auto` node took `leolib` from 13 modules to 53.
+`test_only_importers_and_writers` missed it because its own subprocess
+imported `leoGlobals`. It now imports `util` and checks for application
+modules, and `test_at_auto_loads_no_app_module` reads and writes an `@auto`
+file.
 
 **The four seams**, each replacing something the model used to ask `g.app` for:
 
@@ -285,7 +305,7 @@ which is what `leolib` already did in effect.
   needs its levels shifted; and a reused gnx makes two files stop
   round-tripping. `check_leo_sync` caught all of it, and nothing else did.
 
-**Still to do:** move the nine model modules into `leo/leolib/`. Nothing
+**Still to do:** move the ten model modules into `leo/leolib/`. Nothing
 blocks it — the imports all point the right way — but it needs a decision about
 the old paths first. See **Pick up here** at the top of this file.
 
@@ -321,7 +341,7 @@ specification and the oracle to test against. Two properties already exist in
   for byte.
 
 - [ ] **Widen the corpus.** `LeoPyRef.leo` contains only `@file`, `@clean` and
-      `@edit`, and just 2 of its 11,386 vnodes have more than one parent. It
+      `@edit`, and just 2 of its 11,581 vnodes have more than one parent. It
       cannot exercise the model. A corpus should add: clones (several parents,
       and a clone whose subtree is edited), CRLF line endings, non-UTF-8
       encodings, all six directives, `@auto` in several languages, and **a file
@@ -393,7 +413,7 @@ Not oversights — each was investigated and left deliberately.
 ## Running the checks
 
 ```bash
-uv run python run_ci_unit_tests.py      # 942 tests; 4 skips under Qt, 23 without
+uv run python run_ci_unit_tests.py      # 953 tests; 4 skips under Qt, 23 without
 uv run ruff check leo
 uv run ruff format --check leo
 uv run ty check leo

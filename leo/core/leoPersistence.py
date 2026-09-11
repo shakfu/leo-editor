@@ -8,7 +8,7 @@ from __future__ import annotations
 import binascii
 import pickle
 from typing import Any, TYPE_CHECKING
-from leo.core import leoGlobals as g
+from leo.leolib import util as g
 
 if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr

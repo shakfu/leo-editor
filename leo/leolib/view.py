@@ -1,20 +1,18 @@
+# @+leo-ver=5-thin
+# @+node:sa.20260911120000.10: * @file ../leolib/view.py
 """
-The view half of the terminal front end.
+leolib's minimal view: what the model asks of a view, and nothing more.
 
-`leolib.open_outline` returns an Outline with no view at all. Everything that
-is a fact about a *window* rather than about the document -- which nodes are
-folded, where the cursor is, what the body buffer holds -- has to come from
-somewhere, and this is that somewhere.
+`leolib.open_outline` returns an Outline with no view at all. Facts about a
+*window* rather than the document -- which nodes are folded, where the cursor
+is, what the body buffer holds -- have to come from somewhere, and View is
+that somewhere. Undo needs one, because it restores the caret into the view
+that acted.
 
-TuiView is not a commander. It is the set of members the model actually asks a
-view for, listed in one place so the size of that protocol is measured rather
-than guessed. Adding a member here means the model reached for something new;
-the list should only ever get shorter. See LEO_REFACTOR.md and TODO.md.
-
-What is *not* here is the measurement that matters. There are no settings, no
-document cache and no window geometry, because Outline.ask_view lets a view
-decline to answer and falls back to what the document already knows. A terminal
-answers the questions a terminal can answer.
+View is not a commander. Its members are the ones the model actually asks
+for, so adding one means the model reached for something new. Outline.ask_view
+lets a view decline anything else, so there are no settings, no document cache
+and no window geometry here. leo/leotui uses it as its view.
 """
 
 from __future__ import annotations
@@ -26,6 +24,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from leo.core.leoCommands import Commands as Cmdr
 
 
+# @+others
+# @+node:sa.20260911120000.11: ** class Buffer
 class Buffer:
     """
     The view's text buffer.
@@ -60,7 +60,7 @@ class Buffer:
         self.sel = (i, j)
 
     def seeInsertPoint(self) -> None:
-        pass  # The terminal recomputes its scroll on every frame.
+        pass  # Nothing is displayed, so there is nothing to scroll.
 
     def getYScrollPosition(self) -> int:
         return self.y
@@ -69,6 +69,7 @@ class Buffer:
         self.y = y
 
 
+# @+node:sa.20260911120000.12: ** class _Body
 class _Body:
     """What Leo calls a frame's body: only a buffer, here."""
 
@@ -76,9 +77,10 @@ class _Body:
         self.wrapper = wrapper
 
 
+# @+node:sa.20260911120000.13: ** class Frame
 class Frame:
     """
-    What Leo calls a frame -- for a terminal, just somewhere to hang the buffer.
+    What Leo calls a frame -- here, just somewhere to hang the buffer.
 
     Undo reads the caret, selection and scroll position from
     `c.frame.body.wrapper`, so a view that wants undo must expose one.
@@ -91,13 +93,14 @@ class Frame:
         self.body = _Body(wrapper)
 
 
-class TuiView:
+# @+node:sa.20260911120000.14: ** class View
+class View:
     """
-    One terminal window onto an Outline.
+    One view onto an Outline.
 
-    Attach with TuiView(outline); the outline's `views` list is what makes
+    Attach with View(outline); the outline's `views` list is what makes
     per-view folding and `outline.c` work. Every member below exists because
-    the model asks for it and a terminal can answer it.
+    the model asks for it.
     """
 
     def __init__(self, outline: Any) -> None:
@@ -136,8 +139,8 @@ class TuiView:
         return self.view_state.is_expanded(p.gnx)
 
     # --- redraw -----------------------------------------------------------
-    # A terminal repaints the whole screen on every keystroke, so a deferred
-    # redraw is only a flag the model can set and clear.
+    # A deferred redraw is only a flag the model can set and clear; the
+    # front end decides when to repaint.
     def redraw_later(self) -> None:
         self.requestLaterRedraw = True
 
@@ -145,10 +148,8 @@ class TuiView:
         self.requestLaterRedraw = False
 
     # --- view jobs undo asks for ------------------------------------------
-    # Each of these is real work in a Qt window and no work at all here. They
-    # are no-ops because a terminal has nothing to do, not because they are
-    # unimplemented: the screen is redrawn wholesale on the next keystroke,
-    # there is no colourizer, and nothing can take focus.
+    # Each of these is real work in a Qt window and none here: there is no
+    # colourizer, nothing can take focus, and no headline widget can go stale.
     def recolor(self, p: Any = None) -> None:
         pass
 
@@ -159,7 +160,13 @@ class TuiView:
         pass
 
     def on_model_head_changed(self, v: Any = None, origin: Any = None) -> None:
-        pass  # The model rebuilds its rows; see leo/leotui/model.py.
+        pass
 
     def editHeadline(self) -> None:
-        pass  # The terminal runs its own one-line editor.
+        pass
+
+
+# @-others
+# @@language python
+# @@tabwidth -4
+# @-leo

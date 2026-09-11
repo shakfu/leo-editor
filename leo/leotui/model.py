@@ -2,7 +2,7 @@
 The model side of the terminal front end.
 
 Written against leolib -- an Outline, Positions, the document's event bus, and
-a TuiView -- and against nothing else. There is no commander here, so there is
+a View -- and against nothing else. There is no commander here, so there is
 no `c.doCommandByName`: Leo's own commands live on Commands and reach
 `g.app.gui`, which is exactly the coupling this front end exists to avoid.
 The structural edits below are therefore built from the Position primitives in
@@ -18,7 +18,7 @@ from typing import Any
 
 from leo import leolib
 from leo.core import signal_manager
-from leo.leotui.view import TuiView
+from leo.leolib.view import View
 
 
 class Row:
@@ -42,9 +42,9 @@ class Row:
 class OutlineModel:
     """A terminal view's access to one Outline."""
 
-    def __init__(self, outline: Any, view: TuiView | None = None) -> None:
+    def __init__(self, outline: Any, view: View | None = None) -> None:
         self.outline = outline
-        self.view = view if view is not None else TuiView(outline)
+        self.view = view if view is not None else View(outline)
         self.index = 0
         self.body_scroll = 0
         self.dirty = True

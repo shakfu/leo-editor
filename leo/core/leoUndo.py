@@ -84,11 +84,12 @@ class Undoer:
     def __init__(self, c: Cmdr) -> None:
         # The undo stack belongs to the *document*: one outline, one history.
         # Several views may share it, so the Undoer must not pin one commander.
-        self.outline = c.outline
+        # c may be the Outline itself when no view is attached, as in VNode.
+        self.outline = getattr(c, 'outline', c)
         self.interleaved_groups = 0  # Counted by u.check_group_origin.
         self.p: Position | None = None  # The position/node being operated upon for undo and redo.
         self.granularity = None  # Set in reloadSettings.
-        self.max_undo_stack_size = c.outline.config.getInt('max-undo-stack-size') or 0
+        self.max_undo_stack_size = self.outline.config.getInt('max-undo-stack-size') or 0
         # State ivars...
         self.beads = []  # List of undo nodes.
         self.bead = -1  # Index of the present bead: -1:len(beads)

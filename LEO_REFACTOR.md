@@ -42,7 +42,7 @@ upstreamable on their own merits.
 leolib                the model and its machinery. No view, ever.
    ^
    +-- leogui         the Qt front end      (today: leo/plugins/qt_*)
-   +-- leotui         the terminal front end (today: leo/tui)
+   +-- leotui         the terminal front end (leo/leotui, on leolib)
    +-- leoweb         the web front end      (today: leoserver, as a seed)
 ```
 
@@ -59,22 +59,24 @@ only once the boundary has stopped moving. The boundary is the real artifact.
 
 | via | leo modules imported | view modules among them | nodes |
 |---|---|---|---|
-| `leoBridge` + null gui | 99 | **9** — leoFrame, leoGui, leoKeys, leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground | 11,386 |
-| `leolib.open_outline` | **11** | **0** | **11,386** |
+| `leoBridge` + null gui | 105 | **10** — leoFrame, leoGui, leoKeys, leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground, leoQt | 11,581 |
+| `leolib.open_outline` | **13** | **0** | **11,581** |
 
 The two outlines are **byte-identical**: same gnxs, same headlines, same bodies,
 checked by hashing `h + b` for every node. A full round trip -- create, edit,
-save, reopen, edit, save -- imports 7 modules and no view. Files written by
+save, reopen, edit, save -- imports 11 modules and no view. Files written by
 leolib open in Leo and vice versa; that is checked both ways.
 
-Two of the 99 numbers deserve a footnote, because the first reading of them was
+Two of the 105 numbers deserve a footnote, because the first reading of them was
 wrong. 36 of the modules are `leo/plugins/importers/*` and `leo/plugins/writers/*`
 -- language parsers for `@auto` files, which are model machinery and belong in
 leolib rather than in a front end. And the *import* graph was already clean:
-stage 1 did its job, and `import leoCommands` pulls in 6 modules with no view
-among them. All 9 view modules arrive at **runtime**, from `Commands.__init__`
-building a frame, a menu, a key handler, a chapter controller, vim and a
-colorizer. The coupling was never in the imports. It was in the construction.
+stage 1 did its job, and `import leoCommands` pulls in 10 modules with no view
+among them. All 10 view modules arrive at **runtime**: 7 while
+`leoBridge.controller()` starts the application, `leoQt` among them through
+`leoBackground`'s guarded import, and `leoChapters`, `leoKeys` and `leoVim`
+when the file's commander is built. The coupling was never in the imports. It
+was in the construction.
 
 ### What made it possible
 
@@ -124,7 +126,7 @@ next thing to move.
 ### Reading `@file` trees
 
 Without this leolib returned a shell: a `.leo` file stores only the outline's
-own nodes, so `LeoPyRef.leo` is 530 nodes without its external files and 11,386
+own nodes, so `LeoPyRef.leo` is 536 nodes without its external files and 11,581
 with. `leolib.open_outline` reads them by default.
 
 - **`AtFile`, `FastAtRead` and `ShadowController` take an `Outline`**, the same
@@ -142,7 +144,7 @@ with. `leolib.open_outline` reads them by default.
   setting it does not know rather than guessing, which is how it caught its own
   first bug -- `new_leo_file_encoding = 'UTF-8'` where Leo uses `'utf-8'`,
   enough to change the XML declaration of every file leolib wrote.
-- **`leo/core/leoLanguageData.py`** holds the three language dicts that were
+- **`leo/leolib/language_data.py`** holds the three language dicts that were
   defined inline in `LeoApp` -- comment delimiters and file extensions, 192 +
   179 + 148 entries, verified identical after the move. They are model data:
   the readers need to know a `.py` file is Python with no application running.
@@ -223,13 +225,15 @@ exactly these 34 -- none of them touches a front end. So:
 - `leo/core/leoPluginRegistry.py` holds the registration, taking the object
   that owns the tables rather than reaching for `g.app`. `LoadManager` calls
   it while starting Leo; leolib calls it with its own minimal app. Same move
-  as `leoLanguageData`, and it removes the duplication rather than adding any.
+  as `language_data`, and it removes the duplication rather than adding any.
 - The importers load **lazily**, on first touch of a dispatch table. Loading
   them eagerly tripled leolib's module count (11 to 46) for every caller, and
   most outlines contain no `@auto` node at all.
 - `test_only_importers_and_writers` replaces the blanket ban: nothing else
-  under `leo.plugins` may be imported, no view module may arrive with them,
-  and they must not load before something asks.
+  under `leo.plugins` may be imported, no view or application module may
+  arrive with them, and they must not load before something asks. Its first
+  version imported `leoGlobals` itself, so it passed while the importers
+  loaded `leoGlobals` and `leoCommands`; see `TODO.md` section 3.
 
 Two more viewless bugs fell out: `writeOneAtNosentNode` and
 `writeOneAtAsisNode` took the node for the `before-writing-external-file` hook
@@ -238,8 +242,8 @@ written -- and `leoImport.createOutline` moved a caret that does not exist.
 
 ### Still to do
 
-- **`leogui` / `leotui` / `leoweb` do not exist as packages.** `leo/tui` is the
-  terminal front end and needs renaming; the Qt front end is spread across
+- **`leogui` and `leoweb` do not exist as packages.** `leo/leotui` is the
+  terminal front end, on `leolib`; the Qt front end is spread across
   `leo/plugins/qt_*` and the Qt halves of `leoFrame`; `leoweb` is unstarted, with
   `leoserver` as the obvious seed.
 - **All six supported directives now read and write.** See below.
@@ -267,7 +271,7 @@ skipped item; stage 7 is not started and probably never needs to be.
 
 | Stage | Status |
 |---|---|
-| 0 — Safety net | **done** — 935 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
+| 0 — Safety net | **done** — 953 tests, ruff, ty and check_leo_sync all green, headless and under real PyQt6 |
 | 1 — Break the import-time Qt dependency | **done** — `leo/core` has zero eager Qt or plugin imports |
 | 2 — Model notifications | **done** except the freewin conversion, which needs a machine with Qt |
 | 3 — Extract `Outline` from `Commands` | **done** — two views on one outline, with `open-second-view` |
@@ -284,10 +288,10 @@ Verified on this branch, on a machine with **no PyQt6 and no pip**:
 
 ```
 $ PYTHONPATH=. python3 run_ci_unit_tests.py
-run_ci_unit_tests.py: 935 unit tests passed.        # 23 skipped: 8 need Qt, 15 pre-existing
+run_ci_unit_tests.py: 953 unit tests passed.        # 23 skipped
 
 $ ruff check leo && ruff format --check leo
-All checks passed!  /  546 files already formatted
+All checks passed!  /  568 files already formatted
 
 $ PYTHONPATH=. python3 -m leo.scripts.check_leo_sync
 LeoPyRef.leo is in sync with all mirrored files.
@@ -297,14 +301,15 @@ All four CI gates pass, headless *and* under real PyQt6 via `uv run`:
 
 ```
 ruff check leo         All checks passed!
-ruff format --check    557 files already formatted
+ruff format --check    568 files already formatted
 ty check leo           All checks passed!
-run_ci_unit_tests.py   935 passed  (23 skips headless, 4 under Qt)
+run_ci_unit_tests.py   953 passed  (23 skips headless, 4 under Qt)
 check_leo_sync         LeoPyRef.leo is in sync
 ```
 
-Headless commander startup dropped from 0.22s to 0.04s, because importing Leo no longer
-imports Qt.
+Headless commander startup (`leoTest2.create_app('null')`, imports included) takes
+0.08s without PyQt6 installed and 0.19s with it. Leo no longer needs Qt to import, but
+`leoBackground`'s guarded import still loads PyQt6 whenever it is installed.
 
 `ty check leo` is worth calling out. `main` passes it clean; this branch had accumulated
 **46 diagnostics** before anyone ran it, and none of the earlier work had. Most were one

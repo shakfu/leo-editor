@@ -2,8 +2,12 @@
 # @+node:ekr.20140726091031.18143: * @file ../plugins/writers/basewriter.py
 """A module defining the base class for all writers in leo.plugins.writers."""
 
-from leo.core.leoCommands import Commands as Cmdr
+from __future__ import annotations
+from typing import TYPE_CHECKING
 from leo.core.leoNodes import Position
+
+if TYPE_CHECKING:  # pragma: no cover
+    from leo.core.leoCommands import Commands as Cmdr
 
 
 # @+others

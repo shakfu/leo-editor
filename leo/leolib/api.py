@@ -17,17 +17,15 @@ privileged: leolib must never import any of them, and `test_leolib_boundary`
 fails the build if it does.
 
 What this buys, measured: opening leo/core/LeoPyRef.leo through leoBridge puts
-102 leo.* entries in sys.modules, 9 of them view modules (leoFrame, leoGui,
-leoKeys, leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground).
-Opening the same file through leolib.open_outline, reading every one of its 376
-external files, puts in 11, and none of them is a view.
+105 leo.* entries in sys.modules, 10 of them view modules (leoFrame, leoGui,
+leoKeys, leoMenu, leoColorizer, leoAPI, leoVim, leoChapters, leoBackground,
+leoQt). Opening the same file through leolib.open_outline, reading every one of
+its 376 external files, puts in 13, and none of them is a view.
 
 Status: this is the seam, not the finished package. The modules still live in
 leo/core; leolib names the subset that is view-free and holds the line with a
-test. That makes the boundary a test result rather than a structural fact, and
-it flatters the module count: leoGlobals is not a view-free module, only one
-whose view-touching functions leolib never calls. TODO.md section 3 has the
-three steps, in dependency order, that would make this a package.
+test. That makes the boundary a test result rather than a structural fact.
+TODO.md section 3 has what remains to make this a package.
 
 Usage:
 
@@ -315,8 +313,8 @@ def open_outline(path: str, read_external: bool = True) -> Outline:
 
     A .leo file stores only the outline's own nodes; the contents of @file,
     @clean and friends live in the external files themselves. Reading them is
-    on by default because otherwise this returns a shell -- LeoPyRef.leo is 530
-    nodes without them and 11,373 with. Pass read_external=False to look at
+    on by default because otherwise this returns a shell -- LeoPyRef.leo is 536
+    nodes without them and 11,581 with. Pass read_external=False to look at
     just the .leo file, which is much faster and is what you want if you only
     need the shape of the outline.
 
@@ -438,14 +436,17 @@ def undoer(outline: Outline) -> Any:
     somebody wants undo, because a script that only reads a .leo file should
     not pay for it.
 
-    Undo of a *body* change reads the caret and selection from the acting
-    view's `frame.body.wrapper`; a view with no buffer still gets working
-    structural undo. See leo/leotui/view.py.
+    Undo restores the caret and selection into the acting view, so it needs
+    one. Attach leolib.View(outline) first when no front end has.
+
+    Raises ValueError if no view is attached.
     """
     if outline.undoer is None:
+        if outline.c is None:
+            raise ValueError('undo needs a view: attach leolib.View(outline) first')
         from leo.core import leoUndo
 
-        outline.undoer = leoUndo.Undoer(cast('Any', outline.c or outline))
+        outline.undoer = leoUndo.Undoer(cast('Any', outline))
     return outline.undoer
 
 

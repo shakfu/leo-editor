@@ -2,11 +2,15 @@
 # @+node:ekr.20140726091031.18079: * @file ../plugins/writers/org.py
 """The @auto write code for Emacs org-mode (.org) files."""
 
+from __future__ import annotations
 from collections.abc import Callable
-from leo.core import leoGlobals as g  # Required.
-from leo.core.leoCommands import Commands as Cmdr
+from typing import TYPE_CHECKING
+from leo.leolib import util as g  # Required.
 from leo.core.leoNodes import Position
 from leo.plugins.writers import basewriter
+
+if TYPE_CHECKING:  # pragma: no cover
+    from leo.core.leoCommands import Commands as Cmdr
 
 
 # @+others
